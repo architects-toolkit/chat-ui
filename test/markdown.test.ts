@@ -25,6 +25,11 @@ describe('renderMarkdown', () => {
         expect(renderMarkdown('`**not bold**`')).not.toContain('<strong>');
     });
 
+    it('does not eat plain digits between spaces (placeholder sentinel)', () => {
+        expect(renderMarkdown('score 5 points and 10 more `code` end')).toContain('5');
+        expect(renderMarkdown('score 5 points and 10 more `code` end')).toContain('10 more');
+    });
+
     it('renders fenced code, including unclosed fences', () => {
         expect(renderMarkdown('```js\nlet a = 1;\n```')).toContain('language-js');
         const open = renderMarkdown('```\npartial code');
