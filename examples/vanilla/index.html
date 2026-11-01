@@ -77,6 +77,28 @@
       },
     };
 
+    /*
+     * Theming demo: `?theme=dark` selects the built-in dark palette;
+     * `?theme=brand` applies a host-defined look shipped via extraCss —
+     * near-black surfaces, lime accent, hairline borders.
+     */
+    const BRAND_CSS = `
+      .chat-ui[data-theme='brand'] {
+        --cui-bg: #0b0b0d;
+        --cui-fg: #e8e8ea;
+        --cui-muted: #8a8a92;
+        --cui-border: #26262b;
+        --cui-assistant-bg: #141416;
+        --cui-user-bg: #1e2413;
+        --cui-accent: #b8f540;
+        --cui-accent-fg: #11130a;
+        --cui-accent-subtle: rgba(184,245,64,0.08);
+        --cui-border-width: 0.5px;
+        --cui-radius: 6px;
+      }
+    `;
+    const theme = new URLSearchParams(location.search).get('theme') ?? undefined;
+
     const view = createChatView(document.getElementById('app'), {
       transport,
       features: {
@@ -87,6 +109,8 @@
       },
       placeholder: 'Say something…',
       deltaFormat: 'markdown',
+      ...(theme ? { theme } : {}),
+      ...(theme === 'brand' ? { extraCss: BRAND_CSS } : {}),
     });
 
     view.setStatus('Ready');

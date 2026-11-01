@@ -34,9 +34,15 @@ The message list re-pins to the bottom only while the user is at/near the bottom
 
 Enter submits only outside an active IME composition (`compositionstart`/`compositionend`, `isComposing`, `keyCode 229`); Escape is likewise guarded so composition cancellation never clears a staged quote. The composer autosizes, accepts pasted files when `attachments` is on, and stages attachments (files and typed `ChatAttachment` refs) with image previews.
 
-## 8. Theming is token-based
+## 8. Theming is layered, token-first
 
-The default stylesheet consumes `--cui-*` custom properties only. Re-theming = setting tokens; `data-theme="dark"` selects the dark palette; `unstyled: true` removes the injected sheet entirely.
+Three configuration tiers, in order of increasing host ownership:
+
+1. **Tokens** — the default stylesheet consumes `--cui-*` custom properties only: palette (including semantic `--cui-ok`/`--cui-warn` tones), typography, rhythm, shape and elevation. Set them on `.chat-ui` or any ancestor; `options.theme` stamps `data-theme` on the root — `'dark'` selects the built-in palette, any other name is host-defined (`[data-theme='brand']` selectors). Scaled-down values (small font sizes, inner radii, accent bars) derive from their base token through `calc()` so a single override stays proportional.
+2. **`options.extraCss`** — a second `<style>` element injected after `DEFAULT_STYLES`, so token overrides, theme variants and small rules ship with the mount config. Injected even under `unstyled` — it is host-supplied CSS either way.
+3. **`options.unstyled`** — suppresses `DEFAULT_STYLES` entirely; the host owns every rule.
+
+Injected sheets carry `data-cui-styles` (`'default'` | `'extra'`) for tooling and tests. No rule may carry a hard-coded value that a token covers.
 
 ## 9. Safety by default
 

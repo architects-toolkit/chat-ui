@@ -400,8 +400,29 @@ export interface ChatViewOptions {
     readonly features?: ChatFeatures;
     /** Placeholder text for the composer input. */
     readonly placeholder?: string;
-    /** When true, no built-in stylesheet is injected (full host styling). */
+    /**
+     * When true, `DEFAULT_STYLES` is not injected — the host owns every
+     * rule. `extraCss` is still injected: it is host-supplied CSS either
+     * way, there is simply no default sheet before it.
+     */
     readonly unstyled?: boolean;
+    /**
+     * Stamps `data-theme` on the root element. The built-in stylesheet
+     * ships a `'dark'` palette; any other name is host-defined and
+     * consumed by host CSS or `extraCss` (`[data-theme='brand']`
+     * selectors targeting `.chat-ui` or its descendants).
+     */
+    readonly theme?: string;
+    /**
+     * Host CSS injected as a second `<style>` element after
+     * `DEFAULT_STYLES` — the escape hatch that ships with the mount
+     * options: `--cui-*` token overrides, `data-theme` variants, and
+     * small rules live with the mount config. Injected even when
+     * `unstyled` is set (it is host CSS either way). Every injected
+     * sheet carries a `data-cui-styles` attribute (`'default'` |
+     * `'extra'`) so tooling and tests can query them.
+     */
+    readonly extraCss?: string;
     /**
      * Markdown → HTML renderer used for `markdown` parts and the
      * streaming tail. Default: the bundled dependency-free renderer.
