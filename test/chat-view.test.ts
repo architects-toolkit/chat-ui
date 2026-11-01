@@ -94,6 +94,38 @@ describe('createChatView', () => {
         expect(card!.textContent).toContain('30s');
     });
 
+    it('calls transport.requestAttachments on attach click, with no file input created', () => {
+        const requestAttachments = vi.fn();
+        const { host } = mount({ requestAttachments }, { attachments: true });
+        expect(host.querySelector('input[type="file"]')).toBeNull();
+        host.querySelector<HTMLButtonElement>('.cui-attach')!.click();
+        expect(requestAttachments).toHaveBeenCalledTimes(1);
+    });
+
+    it('sends host-staged attachments through submit and clears them after send', () => {
+        const send = vi.fn();
+        const { host, view } = mount({ send }, { attachments: true });
+        const file = new File(['x'], 'note.txt', { type: 'text/plain' });
+        const ref = { kind: 'audio', name: 'rec.ogg', url: 'blob:fake' };
+        view.stageAttachments([file, ref]);
+        expect(view.getAttachments().length).toBe(2);
+        const input = host.querySelector<HTMLTextAreaElement>('textarea.cui-input')!;
+        input.value = 'with attachments';
+        host.querySelector<HTMLButtonElement>('.cui-send')!.click();
+        expect(send).toHaveBeenCalledWith({ text: 'with attachments', attachments: [file, ref] });
+        expect(view.getAttachments()).toEqual([]);
+        expect(host.querySelector('.cui-attachments.visible')).toBeNull();
+    });
+
+    it('clicks the built-in file input when requestAttachments is absent', () => {
+        const { host } = mount({}, { attachments: true });
+        const fileInput = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+        expect(fileInput).toBeTruthy();
+        const clickSpy = vi.spyOn(fileInput, 'click');
+        host.querySelector<HTMLButtonElement>('.cui-attach')!.click();
+        expect(clickSpy).toHaveBeenCalledTimes(1);
+    });
+
     it('escapes markdown input instead of injecting HTML', () => {
         const { host, view } = mount();
         view.addMessage({

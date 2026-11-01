@@ -8,7 +8,9 @@ A platform-independent UI toolkit for building LLM chat interfaces: message prim
 
 ## 2. Transport is injected, never imported
 
-The view performs **zero I/O**. Everything the user can trigger flows through a host-supplied `ChatTransport` (`send`, `cancel`, queue ops, `messageAction`, `selectModel`). This makes the view embeddable over any channel — HTTP+SSE, WebSocket, a native-webview postMessage bridge, a worker, or a test double — and keeps the package free of fetch/auth/session policy.
+The view performs **zero I/O**. Everything the user can trigger flows through a host-supplied `ChatTransport` (`send`, `cancel`, queue ops, `messageAction`, `selectModel`, `requestAttachments`). This makes the view embeddable over any channel — HTTP+SSE, WebSocket, a native-webview postMessage bridge, a worker, or a test double — and keeps the package free of fetch/auth/session policy.
+
+When `requestAttachments` is defined, the 📎 button delegates the file pick to the host (e.g. a native dialog) and the built-in `<input type=file>` is not created; the host stages picks through `handle.stageAttachments(...)` and they reach `send` like composer-picked files.
 
 All interactive part surfaces funnel through `messageAction(messageId, action, payload)`: question answers `{ answer }`, approval decisions `{ decision }`, model-select changes `{ model }`, suggestion picks `{ text }`, and generic actions rows. The composer model picker reports through `selectModel(modelId)`.
 
