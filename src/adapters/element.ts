@@ -10,7 +10,18 @@
 import { createChatView } from '../chat-view.js';
 import type { ChatViewHandle, ChatViewOptions } from '../types.js';
 
-export class ChatUIViewElement extends HTMLElement {
+/*
+ * The IIFE bundle may be evaluated in a context without DOM globals
+ * (injected before DOMContentLoaded, pre-bundled by a host, SSR'd) where a
+ * bare `extends HTMLElement` would throw a ReferenceError at import time.
+ * Fall back to a stub base — the class is only ever instantiated by
+ * `customElements.define`, which is itself guarded in defineChatUIElement.
+ */
+const HTMLElementBase: typeof HTMLElement =
+    (globalThis as { HTMLElement?: typeof HTMLElement }).HTMLElement ??
+    (class {} as unknown as typeof HTMLElement);
+
+export class ChatUIViewElement extends HTMLElementBase {
     private view: ChatViewHandle | null = null;
     private pending: ChatViewOptions | null = null;
 
@@ -35,9 +46,12 @@ export class ChatUIViewElement extends HTMLElement {
     }
 }
 
-/** Registers `<chat-ui-view>` — idempotent. */
+/**
+ * Registers `<chat-ui-view>` — idempotent. No-ops in contexts without a
+ * `customElements` registry (non-DOM evaluation of the vendored bundle).
+ */
 export function defineChatUIElement(tag = 'chat-ui-view'): void {
-    if (!customElements.get(tag)) {
-        customElements.define(tag, ChatUIViewElement);
-    }
+    const registry = (globalThis as { customElements?: CustomElementRegistry }).customElements;
+    if (!registry || registry.get(tag)) return;
+    registry.define(tag, ChatUIViewElement);
 }

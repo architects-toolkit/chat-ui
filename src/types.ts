@@ -7,6 +7,8 @@
  * native-webview bridge, a worker) — that is the transport's business.
  */
 
+import type { CanonicalInteraction } from './interactions.js';
+
 /** Who authored a message. `tool` is a first-class role for call/result parts. */
 export type ChatRole = 'user' | 'assistant' | 'system' | 'tool';
 
@@ -326,6 +328,18 @@ export interface ChatViewHandle {
     addMessage(message: ChatMessage): void;
     /** Patch an existing message in place. */
     updateMessage(domKey: string, message: Partial<ChatMessage>): void;
+    /**
+     * Canonical contract (v2): append a `CanonicalInteraction` — thin
+     * delegate over `addMessage(interactionToMessage(i))`. Hosts can
+     * program purely against the canonical vocabulary.
+     */
+    addInteraction(interaction: CanonicalInteraction): void;
+    /**
+     * Canonical contract (v2): patch an interaction in place by domKey —
+     * thin delegate over `updateMessage` with the patch normalized
+     * (`background` role → `system`, malformed fields dropped).
+     */
+    updateInteraction(domKey: string, patch: Partial<CanonicalInteraction>): void;
     /**
      * Streaming helper: append text to the last `text`/`markdown` part
      * (creates one of `options.deltaFormat` type when absent). Markdown
