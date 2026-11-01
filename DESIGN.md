@@ -44,6 +44,25 @@ Text/markdown parts are escaped before rendering; `html` parts are documented as
 
 `ChatViewHandle` is the stable imperative surface hosts program against (add/update/delta/remove messages, queue, status, processing, quote, models, attachments, scroll). Its methods are the compatibility contract — internal DOM layout and class names may evolve within majors, handle semantics may not. Breaking changes bump MAJOR under semver.
 
+## 11. The canonical interaction contract (v2)
+
+Hosts converge on **one serialized shape** — `CanonicalInteraction` (`src/interactions.ts`) — instead of constructing `ChatMessage` values ad hoc. Each host maps its own domain objects (message DTOs, interaction objects, stream events) into the canonical JSON, then hands it to the view. The shape is JSON-safe: `JSON.parse(JSON.stringify(i))` is lossless, so it crosses HTTP/SSE/native-bridge/worker boundaries without codecs.
+
+Entry points:
+
+- `interactionToMessage(i)` — strict conversion: validates the minimal wire invariants (`id` non-empty, `parts` an array), throws `TypeError` on violations, normalizes the rest.
+- `normalizeInteraction(input)` — tolerant conversion for partial/streamed objects: generates a session-unique `cui-N` id when absent, defaults `role` to `'assistant'`, `parts` to `[]`. Never throws.
+- `interactionsToMessages(list)` / `interactionPatchToMessage(patch)` — batch and patch helpers.
+- `handle.addInteraction(i)` / `handle.updateInteraction(domKey, patch)` — delegates over `addMessage`/`updateMessage` so hosts program purely against the canonical vocabulary.
+
+Normalization semantics every consumer can rely on:
+
+- `role: 'background'` — a canonical-only role for background-agent/audit turns — maps to the `'system'` render role. The four `ChatRole` values pass through; anything else becomes `'assistant'`.
+- `CanonicalPart` **is** `MessagePart` — one union, one definition, aliased for wire naming.
+- Malformed part entries (non-objects, missing `type`) are dropped at the boundary; unknown-but-well-formed `type`s pass through to the `partRenderers` registry — custom parts ride the same wire.
+
+The lifecycle mirrors the handle: `addInteraction` → `updateInteraction(domKey, patch)` → `appendDelta(domKey, delta)` for token streaming → `removeMessage(domKey)` to drop.
+
 ## Non-goals (by design)
 
 - No transport implementations bundled (HTTP/SSE/bridge live in hosts).

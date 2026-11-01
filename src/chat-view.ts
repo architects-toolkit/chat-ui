@@ -15,6 +15,7 @@
  *     compositionstart and compositionend.
  */
 
+import { interactionPatchToMessage, interactionToMessage } from './interactions.js';
 import { MarkdownStreamRenderer } from './markdown-stream.js';
 import { renderMarkdown, safeEmbedUrl } from './markdown.js';
 import {
@@ -709,6 +710,15 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
             const entry = byKey.get(domKey);
             if (!entry) return;
             const merged: ChatMessage = { ...entry.message, ...patch };
+            addMessage(merged);
+        },
+        addInteraction(interaction) {
+            addMessage(interactionToMessage(interaction));
+        },
+        updateInteraction(domKey, patch) {
+            const entry = byKey.get(domKey);
+            if (!entry) return;
+            const merged: ChatMessage = { ...entry.message, ...interactionPatchToMessage(patch) };
             addMessage(merged);
         },
         appendDelta(domKey, delta) {

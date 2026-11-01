@@ -19,6 +19,17 @@ Chat UIs keep being rebuilt per product and per framework. This package separate
 npm install @architects-toolkit/chat-ui
 ```
 
+**No bundler?** Hosts without npm can vendor `dist/chat-ui.iife.js` (MIT) — it exposes `window.ChatUI` (`createChatView`, `defineChatUIElement`, `MarkdownStreamRenderer`, `DEFAULT_STYLES`, `interactionToMessage`, `interactionsToMessages`, …) and is safe to inject before `DOMContentLoaded`. A single-file ESM build ships as `dist/chat-ui.js`.
+
+```html
+<script src="chat-ui.iife.js"></script>
+<script>
+  const view = ChatUI.createChatView(document.getElementById('app'), {
+    transport: { send: ({ text }) => window.hostBridge?.send(text) },
+  });
+</script>
+```
+
 ## Quick start (any DOM host)
 
 ```ts
@@ -101,6 +112,96 @@ function Chat({ transport }: { transport: ChatTransport }) {
 | any other string | host-defined | rendered via `partRenderers['card:<kind>']`, then `partRenderers['card']` |
 
 Controls render **disabled** unless `features.messageActions` is on and `transport.messageAction` exists — nothing is interactive by accident.
+
+## Canonical interactions (the v2 protocol)
+
+`CanonicalInteraction` is the serialized contract host applications converge on: each host maps its own domain objects (message DTOs, interaction objects, stream events) into **one canonical JSON shape** the view renders. It is JSON-safe end-to-end — `JSON.parse(JSON.stringify(i))` is lossless — so it crosses HTTP, SSE, native-webview bridges, and workers without codecs.
+
+```ts
+import { interactionToMessage, normalizeInteraction } from '@architects-toolkit/chat-ui';
+
+// strict path — validates invariants, throws TypeError when broken
+view.addMessage(interactionToMessage(myCanonicalInteraction));
+// or program purely against the canonical vocabulary:
+view.addInteraction(myCanonicalInteraction);
+view.updateInteraction(domKey, { status: 'done' });
+// tolerant path — for partial/streamed objects (never throws)
+view.addInteraction(normalizeInteraction(streamChunk));
+```
+
+### Interaction schema
+
+| field | required | notes |
+| --- | --- | --- |
+| `id` | ✓ | non-empty string; `TypeError` when missing/empty |
+| `parts` | ✓ | array of parts; `TypeError` when not an array |
+| `role` | ✓ | `'user' \| 'assistant' \| 'system' \| 'tool' \| 'background'` — `background` renders as `system`; unknown values normalize to `assistant` |
+| `domKey` | | stable key for `updateInteraction`/`appendDelta`/`removeMessage` (defaults to `id`) |
+| `status` | | `'queued' \| 'streaming' \| 'done' \| 'error'` — pending/streaming visuals |
+| `meta` | | JSON-safe host data; `meta.usage` feeds the cost chip, `meta.actions` the actions row |
+
+`normalizeInteraction(partial)` fills every missing field: generated `cui-N` id, `role: 'assistant'`, `parts: []`.
+
+### Part schema (`CanonicalPart` = `MessagePart`)
+
+| `type` | required | optional fields |
+| --- | --- | --- |
+| `text` | `text` | — |
+| `markdown` | `text` | — |
+| `html` | `html` | — (host-trusted markup) |
+| `image` | `src` | `alt`, `name` |
+| `audio` | `src` | `name`, `mimeType` |
+| `video` | `src` | `name`, `mimeType`, `poster` |
+| `divider` | — | — |
+| `tool_call` | `name` | `args`, `status` (`pending\|running\|done\|error`) |
+| `tool_result` | `content` | `name`, `isError` |
+| `quote` | `text` | `source` |
+| `suggestions` | `prompts` (string[]) | — |
+| `usage` | `usage` | `label`, `tokensIn`, `tokensOut`, `cost`, `currency`, `durationMs` |
+| `evidence` | `text` | `detail`, `level` (`info\|warning\|error`) |
+| `card` | `kind` | `data` (see card kinds above) |
+
+Malformed entries (non-objects, missing `type`) are dropped at the boundary; unknown-but-well-formed `type`s pass through to your `partRenderers` registry — custom parts ride the same wire.
+
+```json
+{
+  "id": "turn-42",
+  "role": "assistant",
+  "status": "done",
+  "parts": [
+    { "type": "markdown", "text": "Here is the **plan**." },
+    { "type": "card", "kind": "task_plan",
+      "data": { "steps": [{ "label": "scan", "status": "done" }] } },
+    { "type": "usage", "usage": { "tokensIn": 812, "tokensOut": 96, "cost": 0.0031 } }
+  ],
+  "meta": { "turnId": "t-42" }
+}
+```
+
+### Host mapping recipe
+
+Your domain object → `CanonicalInteraction`, then straight to the view:
+
+```ts
+const interaction: CanonicalInteraction = {
+  id: dto.id,
+  domKey: dto.conversationKey,
+  role: dto.authorKind === 'agent' ? 'background' : dto.authorKind,
+  status: dto.streaming ? 'streaming' : 'done',
+  parts: dto.blocks.map(toCanonicalPart), // your mapper
+  meta: { usage: dto.usage },
+};
+view.addInteraction(interaction);
+```
+
+### Lifecycle
+
+`addInteraction(i)` → `updateInteraction(domKey, patch)` → `appendDelta(domKey, delta)` for token streaming → `removeMessage(domKey)` to drop. Same addressing model as `addMessage` — `domKey ?? id` is the update key.
+
+### Adoption path
+
+1. **Stage 1 — parity cutover**: keep your existing rendering, wrap its HTML output in `{ type: 'html', html }` parts inside canonical interactions. One mapping function, full visual parity, zero renderer work.
+2. **Stage 2 — native parts**: migrate part types incrementally (`html` blocks → `markdown`, custom widgets → typed `card` kinds or `partRenderers`). The wire shape never changes — only your mapper shrinks.
 
 ## Streaming
 

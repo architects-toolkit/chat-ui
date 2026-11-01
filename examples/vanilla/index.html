@@ -12,7 +12,7 @@
 <body>
   <div id="app"></div>
   <script type="module">
-    import { createChatView } from '../../dist/index.js';
+    import { createChatView, interactionToMessage } from '../../dist/index.js';
 
     const STREAMED = [
       'Here is a **markdown** stream with a task list:\n\n',
@@ -25,7 +25,8 @@
     const queue = [];
     const transport = {
       send({ text, attachments }) {
-        view.addMessage({
+        // Canonical v2 vocabulary: domain object → CanonicalInteraction → view.
+        view.addMessage(interactionToMessage({
           id: crypto.randomUUID(),
           role: 'user',
           status: 'done',
@@ -35,11 +36,11 @@
               ? { type: 'image', src: URL.createObjectURL(a), name: a.name }
               : { type: 'evidence', text: `attached: ${a.name ?? a.kind}` }),
           ],
-        });
+        }));
         view.setProcessing(true);
         view.setStatus('Thinking…');
         const key = 'demo-' + Date.now();
-        view.addMessage({
+        view.addInteraction({
           id: key, domKey: key, role: 'assistant', status: 'streaming',
           parts: [{ type: 'markdown', text: '' }],
         });
