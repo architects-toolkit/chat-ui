@@ -187,6 +187,15 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
     let staged: SubmitAttachment[] = [];
     let previews: AttachmentPreview[] = [];
     let destroyed = false;
+    /*
+     * Composer interactivity composes two independent flags — the host's
+     * `setComposerEnabled` toggle and the `setProcessing` turn state —
+     * so the two setters may run in any order: processing never
+     * re-enables a composer the host disabled. `applyComposerState`
+     * below is the single place that derives DOM `disabled` from them.
+     */
+    let composerEnabled = true;
+    let processing = false;
 
     /* ---------------------------------------------------------------- */
     /* Scroll anchoring — ported from Deep Chat's MessagesBase approach:  */
@@ -213,7 +222,7 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
     jump.addEventListener('click', () => applyScroll(true));
 
     /* ---------------------------------------------------------------- */
-    /* Composer autosize                                                  */
+    /* Composer                                                           */
     /* ---------------------------------------------------------------- */
 
     const autosize = (): void => {
@@ -222,6 +231,18 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         const next = Math.min(input.scrollHeight, max);
         input.style.height = `${next}px`;
         input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
+    };
+
+    /*
+     * The composer is editable only while `composerEnabled` AND
+     * `!processing` — one derivation feeds the textarea and the
+     * send/attach buttons so the flags can never disagree with the DOM.
+     */
+    const applyComposerState = (): void => {
+        const editable = !destroyed && composerEnabled && !processing;
+        input.disabled = !editable;
+        send.disabled = !editable;
+        attach.disabled = !editable;
     };
 
     /* ---------------------------------------------------------------- */
@@ -859,6 +880,9 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
     };
 
     const submit = () => {
+        // A disabled composer never submits — the flag state is
+        // authoritative even if a synthetic event reaches the listener.
+        if (input.disabled) return;
         const text = input.value.trim();
         if (!text && staged.length === 0) return;
         const submission: ChatSubmit = staged.length ? { text, attachments: [...staged] } : { text };
@@ -994,9 +1018,10 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         setQueue(items) {
             if (features.queue) renderQueue(items);
         },
-        setProcessing(processing) {
-            root.dataset.processing = String(processing);
-            input.disabled = false;
+        setProcessing(next) {
+            processing = next;
+            root.dataset.processing = String(next);
+            applyComposerState();
         },
         setStatus(status) {
             statusBar.textContent = status;
@@ -1020,6 +1045,31 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
             stagedQuote = null;
             quoteText.textContent = '';
             quote.classList.remove('visible');
+        },
+        getComposerText() {
+            return destroyed ? '' : input.value;
+        },
+        setComposerText(text, opts) {
+            if (destroyed) return;
+            input.value = text;
+            autosize();
+            if (opts?.focus) {
+                input.focus();
+                input.setSelectionRange(input.value.length, input.value.length);
+            }
+        },
+        focusComposer() {
+            if (destroyed) return;
+            input.focus();
+        },
+        setComposerEnabled(enabled) {
+            if (destroyed) return;
+            composerEnabled = enabled;
+            applyComposerState();
+        },
+        setPlaceholder(text) {
+            if (destroyed) return;
+            input.placeholder = text;
         },
         setModels(models, selected) {
             if (!features.modelPicker) return;

@@ -403,7 +403,7 @@ a.cui-ref-title:hover { text-decoration: underline; }
 .cui-cancel { display: none; background: var(--cui-error); }
 .chat-ui[data-processing='true'] .cui-send { display: none; }
 .chat-ui[data-processing='true'] .cui-cancel { display: block; }
-.cui-send:disabled { opacity: 0.5; cursor: default; }
+.cui-send:disabled, .cui-input:disabled, .cui-attach:disabled { opacity: 0.5; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .chat-ui *, .chat-ui *::before, .chat-ui *::after {
     animation-duration: 0.01ms !important;

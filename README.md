@@ -242,6 +242,13 @@ view.addInteraction(interaction);
 - **IME-safe**: Enter never submits mid-composition (`compositionstart`/`compositionend` + `isComposing`/`keyCode 229`); the same guard covers Escape.
 - **Scroll anchoring**: the list stays pinned only while the user is at/near the bottom; scrolling up shows a "↓ Latest" jump button. Instant scroll — no motion, `prefers-reduced-motion` safe.
 - **Autosize** textarea, paste-to-attach, staged-attachment strip with image thumbnails and removal.
+- **Handle API** — hosts drive the composer through `ChatViewHandle`, never by reaching into `.cui-*` DOM nodes:
+  - `getComposerText()` — current input value (`''` after `destroy()`).
+  - `setComposerText(text, { focus: true })` — prefill + autosize; `focus` also focuses with the cursor at the end (edit-and-resend).
+  - `focusComposer()` — focus the input.
+  - `setComposerEnabled(bool)` — toggles the textarea plus send/attach buttons. Composes with `setProcessing`: the composer is interactive only while enabled **and** not processing, so the two may be called in any order — processing never re-enables a disabled composer.
+  - `setPlaceholder(text)` — swap the input placeholder.
+  - All composer methods are safe no-ops on a destroyed view.
 
 ## Attachments & media
 

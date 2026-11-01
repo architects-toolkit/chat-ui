@@ -479,7 +479,13 @@ export interface ChatViewHandle {
     clearMessages(): void;
     /** Reflect outgoing-queue state (requires features.queue). */
     setQueue(items: readonly QueuedMessage[]): void;
-    /** Reflect processing state: disables send, shows cancel. */
+    /**
+     * Reflect processing state: swaps the send button for cancel and
+     * marks the composer non-interactive. Composes with
+     * `setComposerEnabled` — the composer accepts input only while
+     * enabled AND not processing, so the two may be called in any order;
+     * processing never re-enables a composer the host disabled.
+     */
     setProcessing(processing: boolean): void;
     /** Set the status line (e.g. 'Thinking…', 'Error'). */
     setStatus(status: string): void;
@@ -490,6 +496,28 @@ export interface ChatViewHandle {
     /** Currently staged quote text, or null. */
     getQuote(): string | null;
     clearQuote(): void;
+    /**
+     * Current composer input value — what the user typed or what
+     * `setComposerText` prefilled.
+     */
+    getComposerText(): string;
+    /**
+     * Set the composer input value and re-autosize it — the prefill
+     * hook for flows like edit-and-resend. `focus: true` also focuses
+     * the textarea with the cursor at the end of the text.
+     */
+    setComposerText(text: string, opts?: { focus?: boolean }): void;
+    /** Focus the composer input. */
+    focusComposer(): void;
+    /**
+     * Enable or disable the composer: the textarea plus the send and
+     * attach buttons. Composes with `setProcessing` — the composer is
+     * interactive only while enabled AND not processing, so hosts may
+     * call the two in any order.
+     */
+    setComposerEnabled(enabled: boolean): void;
+    /** Update the composer input placeholder. */
+    setPlaceholder(text: string): void;
     /**
      * Feed the composer model picker (requires features.modelPicker).
      * Pass an empty list to keep the picker hidden.
