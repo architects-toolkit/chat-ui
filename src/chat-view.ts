@@ -391,7 +391,8 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
             };
             btn.addEventListener('click', submitAnswer);
             field.addEventListener('keydown', (ev) => {
-                if (ev.key === 'Enter' && !ev.isComposing) submitAnswer();
+                const inComposition = composing || ev.isComposing || ev.keyCode === 229;
+                if (ev.key === 'Enter' && !inComposition) submitAnswer();
             });
             row.append(field, btn);
             card.appendChild(row);
