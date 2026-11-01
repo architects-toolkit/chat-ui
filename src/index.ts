@@ -47,6 +47,8 @@ export type {
     QuestionCardData,
     QueuedMessage,
     ReferenceItem,
+    SubagentRunData,
+    SubagentRunProgress,
     SubmitAttachment,
     TaskPlanCardData,
     TaskPlanStep,

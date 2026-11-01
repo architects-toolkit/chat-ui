@@ -129,6 +129,35 @@
       ],
     });
     view.addMessage({
+      id: 'runs', role: 'assistant', status: 'done',
+      parts: [
+        { type: 'text', text: 'Two background agents are on it — the first is still running (Cancel reports through messageAction):' },
+        {
+          type: 'card', kind: 'subagent_run',
+          data: {
+            id: 'run-1', name: 'Research agent', status: 'running',
+            task: 'Scan the repo for card-renderer usages',
+            detail: 'step 3 of 7 — scanning src/',
+            startedAt: new Date(Date.now() - 12_400).toISOString(),
+            progress: { done: 3, total: 7 },
+            usage: { tokensIn: 2400, tokensOut: 640, cost: 0.0061 },
+            output: 'src/chat-view.ts: renderCard dispatches card:<kind>\nsrc/types.ts: CardPart union\n…',
+            cancellable: true,
+          },
+        },
+        {
+          type: 'card', kind: 'subagent_run',
+          data: {
+            id: 'run-0', name: 'Docs agent', status: 'done',
+            task: 'Summarize the design doc',
+            startedAt: '2025-01-01T10:00:00Z', finishedAt: '2025-01-01T10:01:15Z',
+            usage: { tokensIn: 1824, tokensOut: 312, cost: 0.0042 },
+            output: 'Summary: the view performs zero I/O — hosts drive everything through an injected transport.',
+          },
+        },
+      ],
+    });
+    view.addMessage({
       id: 'w', role: 'assistant',
       parts: [{ type: 'markdown', text: 'Hi! Try the **queue**, the *context card*, image attachments 📎, or `view.stageQuote(...)`.' }],
     });

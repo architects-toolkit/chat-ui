@@ -39,6 +39,7 @@ import type {
     QuestionCardData,
     QueuedMessage,
     ReferenceItem,
+    SubagentRunData,
     SubmitAttachment,
     TaskPlanCardData,
     UsageInfo,
@@ -69,6 +70,14 @@ function usageText(usage: UsageInfo): string {
     if (usage.durationMs != null) bits.push(`${(usage.durationMs / 1000).toFixed(1)}s`);
     return bits.join(' · ');
 }
+
+/** `1234` → `1.2s` · `75_000` → `1m 15s` · `3_900_000` → `1h 5m` — run-card elapsed. */
+const formatElapsed = (ms: number): string => {
+    if (ms < 0) ms = 0;
+    if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
+    return `${Math.floor(ms / 3_600_000)}h ${Math.floor((ms % 3_600_000) / 60_000)}m`;
+};
 
 interface MessageEntry {
     message: ChatMessage;
@@ -533,6 +542,109 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         return details;
     };
 
+    /**
+     * `subagent_run` card — a background-agent run as a first-class card:
+     * status badge (color-coded by lifecycle), name/id, elapsed figure,
+     * task/detail/progress lines, a usage chip, a collapsible output
+     * excerpt and a cancel button for active runs.
+     *
+     * The view never runs timers: the elapsed figure is `elapsedMs`, or
+     * `startedAt`→`finishedAt` (→ now while still active) computed once
+     * at render. Hosts refresh live cards via `updateInteraction`/
+     * `updateMessage` patches. Unknown status strings get a neutral
+     * badge — the card never throws on host-defined states. All text is
+     * assigned through textContent/attributes — never innerHTML.
+     */
+    const SUBAGENT_ACTIVE = new Set(['pending', 'running', 'waiting']);
+    const subagentTone = (status: string): string => {
+        if (status === 'running') return 'accent'; // pulsing badge
+        if (status === 'done') return 'ok';
+        if (status === 'failed' || status === 'timeout') return 'err';
+        if (status === 'cancelled') return 'muted';
+        if (status.startsWith('waiting')) return 'warn'; // 'waiting', 'waiting_input', …
+        return 'neutral'; // 'pending', 'unknown', host-defined states
+    };
+
+    const renderSubagentRun = (data: Partial<SubagentRunData> | undefined, message: ChatMessage): HTMLElement => {
+        const card = el(doc, 'div', 'cui-card cui-subagent');
+        card.dataset.kind = 'subagent_run';
+        const status = typeof data?.status === 'string' && data.status !== '' ? data.status : 'unknown';
+        card.dataset.status = status;
+        const id = typeof data?.id === 'string' ? data.id : '';
+        const name = typeof data?.name === 'string' && data.name !== '' ? data.name : undefined;
+
+        /* Header: badge + name (+ muted id) + elapsed + cancel. */
+        const head = el(doc, 'div', 'cui-subagent-head');
+        const badge = el(doc, 'span', 'cui-subagent-badge', status.replace(/_/g, ' '));
+        badge.dataset.tone = subagentTone(status);
+        head.appendChild(badge);
+        head.appendChild(el(doc, 'span', 'cui-subagent-name', name ?? (id !== '' ? id : 'subagent run')));
+        if (name !== undefined && id !== '' && name !== id) {
+            head.appendChild(el(doc, 'span', 'cui-subagent-id', id));
+        }
+        const elapsedMs =
+            typeof data?.elapsedMs === 'number' && Number.isFinite(data.elapsedMs)
+                ? data.elapsedMs
+                : (() => {
+                      const start = typeof data?.startedAt === 'string' ? Date.parse(data.startedAt) : NaN;
+                      if (Number.isNaN(start)) return undefined;
+                      const end = typeof data?.finishedAt === 'string' ? Date.parse(data.finishedAt) : NaN;
+                      return Number.isNaN(end)
+                          ? SUBAGENT_ACTIVE.has(status)
+                              ? Date.now() - start
+                              : undefined
+                          : end - start;
+                  })();
+        if (elapsedMs !== undefined) {
+            head.appendChild(el(doc, 'span', 'cui-subagent-elapsed', formatElapsed(elapsedMs)));
+        }
+        if (data?.cancellable === true && SUBAGENT_ACTIVE.has(status) && interactive() && id !== '') {
+            const stop = el(doc, 'button', 'cui-subagent-cancel', 'Cancel') as HTMLButtonElement;
+            stop.type = 'button';
+            stop.addEventListener('click', () => {
+                stop.disabled = true;
+                reportAction(message, data?.action ?? 'subagent_cancel', { id, status });
+            });
+            head.appendChild(stop);
+        }
+        card.appendChild(head);
+
+        if (typeof data?.task === 'string' && data.task !== '') {
+            card.appendChild(el(doc, 'div', 'cui-subagent-task', data.task));
+        }
+        if (typeof data?.detail === 'string' && data.detail !== '') {
+            card.appendChild(el(doc, 'div', 'cui-subagent-detail', data.detail));
+        }
+        const progress = data?.progress;
+        if (typeof progress === 'string' && progress !== '') {
+            card.appendChild(el(doc, 'div', 'cui-subagent-detail', progress));
+        } else if (
+            typeof progress === 'object' &&
+            progress !== null &&
+            typeof progress.done === 'number' &&
+            typeof progress.total === 'number'
+        ) {
+            const row = el(doc, 'div', 'cui-subagent-progressrow');
+            const meter = el(doc, 'div', 'cui-subagent-progress');
+            const fill = el(doc, 'i') as HTMLElement;
+            const pct = progress.total > 0 ? Math.max(0, Math.min(100, (progress.done / progress.total) * 100)) : 0;
+            fill.style.width = `${pct}%`;
+            meter.appendChild(fill);
+            row.append(meter, el(doc, 'span', 'cui-subagent-progress-label', `${progress.done}/${progress.total}`));
+            card.appendChild(row);
+        }
+        if (data?.usage && typeof data.usage === 'object') {
+            card.appendChild(renderUsage(data.usage));
+        }
+        if (typeof data?.output === 'string' && data.output !== '') {
+            const details = el(doc, 'details', 'cui-subagent-output');
+            details.appendChild(el(doc, 'summary', 'cui-subagent-output-summary', 'Output'));
+            details.appendChild(el(doc, 'pre', 'cui-subagent-output-pre', data.output));
+            card.appendChild(details);
+        }
+        return card;
+    };
+
     const renderCard = (part: Extract<MessagePart, { type: 'card' }>, message: ChatMessage): HTMLElement | null => {
         const custom = customRenderers[`card:${part.kind}`];
         if (custom) return custom(part, { message, ownerDocument: doc });
@@ -545,6 +657,8 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
                 return renderApproval(part.data as Partial<ApprovalCardData> | undefined, message);
             case 'model_select':
                 return renderModelSelect(part.data as Partial<ModelSelectCardData> | undefined, message);
+            case 'subagent_run':
+                return renderSubagentRun(part.data as Partial<SubagentRunData> | undefined, message);
             default:
                 return customRenderers['card']?.(part, { message, ownerDocument: doc }) ?? null;
         }
@@ -708,6 +822,12 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
             const row = el(doc, 'div', 'cui-queue-item');
             const text = el(doc, 'span', 'cui-queue-text', item.text);
             row.appendChild(text);
+            // Optional attribution suffix — e.g. which agent queued the item.
+            const meta = item.meta as Readonly<Record<string, unknown>> | undefined;
+            const byline = typeof meta?.['agent'] === 'string' ? meta['agent'] : meta?.['author'];
+            if (typeof byline === 'string' && byline !== '') {
+                row.appendChild(el(doc, 'span', 'cui-queue-meta', `· ${byline}`));
+            }
 
             const mkBtn = (label: string, title: string, onClick: () => void) => {
                 const b = el(doc, 'button', '', label) as HTMLButtonElement;
