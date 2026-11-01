@@ -33,6 +33,7 @@ Every shot below is captured from [`examples/screenshots.html`](examples/screens
 | **Attachments** — staged strip with image thumbnails | ![attachment strip](docs/screenshots/attachments.png) |
 | **Chrome** — queue panel, context card, composer model picker | ![queue, context card, model picker](docs/screenshots/queue-context.png) |
 | **References** — collapsed "Sources" footer: sanitized links, verified badge, dates | ![references part](docs/screenshots/references.png) |
+| **Subagent runs** — status badge, elapsed, progress meter, usage chip, cancel | ![subagent_run cards](docs/screenshots/subagent.png) |
 | **Images** — URL-sanitized image parts | ![image part](docs/screenshots/image.png) |
 
 ## Install
@@ -132,9 +133,14 @@ function Chat({ transport }: { transport: ChatTransport }) {
 | `question` | `{ question, options?, allowFreeText?, placeholder?, submitLabel?, action?, answer? }` | chips + free-text input → `{ answer }` |
 | `approval` | `{ title?, description?, approveLabel?, rejectLabel?, action?, state? }` | approve/reject → `{ decision }` |
 | `model_select` | `{ label?, options, selected?, action? }` | `<select>` → `{ model }` |
+| `subagent_run` | `{ id, name?, task?, status, detail?, startedAt?, finishedAt?, elapsedMs?, progress?, usage?, output?, cancellable?, action? }` | cancel while active → `{ id, status }` |
 | any other string | host-defined | rendered via `partRenderers['card:<kind>']`, then `partRenderers['card']` |
 
 Controls render **disabled** unless `features.messageActions` is on and `transport.messageAction` exists — nothing is interactive by accident.
+
+### Subagent runs
+
+`kind: 'subagent_run'` renders a background-agent run as a first-class card: a color-coded status badge (`running` pulses accent, `done` green, `failed`/`timeout` red, `cancelled` muted, `waiting*` amber, anything else neutral), the `name`/`id`, an elapsed figure (`elapsedMs`, else derived once at render from `startedAt`→`finishedAt` — the view runs no timers), the `task`/`detail`/`progress` lines (`{ done, total }` renders a meter, a string renders as-is), a `usage` chip (same format as the `usage` part) and `output` in a collapsed `<details>`. When `cancellable` is set and the status is `pending`/`running`/`waiting`, a Cancel button reports `{ id, status }` through `messageAction` under `action` (default `'subagent_cancel'`). To refresh a live card, push a patch — e.g. `view.updateInteraction(domKey, { parts: [{ type: 'card', kind: 'subagent_run', data: { ...run, status: 'done', elapsedMs: 12_400 } }] })`.
 
 ## Canonical interactions (the v2 protocol)
 

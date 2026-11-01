@@ -539,3 +539,210 @@ describe('card parts', () => {
         expect(host.querySelector('.my-meter')).toBeTruthy();
     });
 });
+
+/* ------------------------------------------------------------------ */
+/* subagent_run card                                                   */
+/* ------------------------------------------------------------------ */
+
+describe('subagent_run card', () => {
+    const runCard = (data: object): ChatMessage =>
+        ({ id: 'm', domKey: 'k', role: 'assistant', parts: [{ type: 'card', kind: 'subagent_run', data } as never] });
+    const cardOf = (host: HTMLElement) => host.querySelector<HTMLElement>('.cui-card[data-kind="subagent_run"]')!;
+    const toneOf = (host: HTMLElement) =>
+        cardOf(host).querySelector<HTMLElement>('.cui-subagent-badge')!.dataset.tone;
+
+    it('maps statuses to badge tones', () => {
+        const { host, view } = mount();
+        for (const [status, tone] of [
+            ['running', 'accent'],
+            ['done', 'ok'],
+            ['failed', 'err'],
+            ['timeout', 'err'],
+            ['cancelled', 'muted'],
+            ['waiting', 'warn'],
+            ['waiting_input', 'warn'],
+            ['pending', 'neutral'],
+        ]) {
+            view.clearMessages();
+            view.addMessage(runCard({ id: 'r1', status }));
+            expect(toneOf(host), status).toBe(tone);
+            expect(cardOf(host).dataset.status).toBe(status);
+        }
+    });
+
+    it('tolerates unknown and missing statuses with a neutral badge', () => {
+        const { host, view } = mount();
+        view.addMessage(runCard({ id: 'r1', status: 'exploding' }));
+        expect(toneOf(host)).toBe('neutral');
+        expect(cardOf(host).querySelector('.cui-subagent-badge')!.textContent).toBe('exploding');
+        view.clearMessages();
+        view.addMessage(runCard({ id: 'r2' })); // no status at all
+        const badge = host.querySelector<HTMLElement>('.cui-subagent-badge')!;
+        expect(badge.dataset.tone).toBe('neutral');
+        expect(badge.textContent).toBe('unknown');
+    });
+
+    it('shows the cancel button only for active states', () => {
+        const { host, view } = mount({ messageAction: vi.fn() }, { messageActions: true });
+        const cases: ReadonlyArray<[string, boolean]> = [
+            ['running', true],
+            ['pending', true],
+            ['waiting', true],
+            ['done', false],
+            ['failed', false],
+            ['cancelled', false],
+            ['timeout', false],
+        ];
+        for (const [status, shown] of cases) {
+            view.clearMessages();
+            view.addMessage(runCard({ id: 'r1', status, cancellable: true }));
+            expect(!!cardOf(host).querySelector('.cui-subagent-cancel'), status).toBe(shown);
+        }
+    });
+
+    it('hides the cancel button when cancellable is unset or actions unwired', () => {
+        // No cancellable flag.
+        const a = mount({ messageAction: vi.fn() }, { messageActions: true });
+        a.view.addMessage(runCard({ id: 'r1', status: 'running' }));
+        expect(cardOf(a.host).querySelector('.cui-subagent-cancel')).toBeNull();
+        // Feature off.
+        const b = mount({ messageAction: vi.fn() }, { messageActions: false });
+        b.view.addMessage(runCard({ id: 'r1', status: 'running', cancellable: true }));
+        expect(cardOf(b.host).querySelector('.cui-subagent-cancel')).toBeNull();
+        // Transport member missing.
+        const c = mount({}, { messageActions: true });
+        c.view.addMessage(runCard({ id: 'r1', status: 'running', cancellable: true }));
+        expect(cardOf(c.host).querySelector('.cui-subagent-cancel')).toBeNull();
+    });
+
+    it('reports { id, status } through messageAction on cancel', () => {
+        const messageAction = vi.fn();
+        const { host, view } = mount({ messageAction }, { messageActions: true });
+        view.addMessage(runCard({ id: 'run-7', status: 'running', cancellable: true }));
+        const btn = cardOf(host).querySelector<HTMLButtonElement>('.cui-subagent-cancel')!;
+        btn.click();
+        expect(messageAction).toHaveBeenCalledWith('m', 'subagent_cancel', { id: 'run-7', status: 'running' });
+        expect(btn.disabled).toBe(true); // no double-report while the host patches state
+    });
+
+    it('honors a custom cancel action id', () => {
+        const messageAction = vi.fn();
+        const { host, view } = mount({ messageAction }, { messageActions: true });
+        view.addMessage(runCard({ id: 'r9', status: 'waiting', cancellable: true, action: 'agent_stop' }));
+        cardOf(host).querySelector<HTMLButtonElement>('.cui-subagent-cancel')!.click();
+        expect(messageAction).toHaveBeenCalledWith('m', 'agent_stop', { id: 'r9', status: 'waiting' });
+    });
+
+    it('renders name/id, task, detail and progress', () => {
+        const { host, view } = mount();
+        view.addMessage(runCard({
+            id: 'run-3', name: 'Research agent', status: 'running',
+            task: 'Scan the repo for usages', detail: 'step 3 of 7 — scanning',
+            progress: { done: 3, total: 7 },
+        }));
+        const card = cardOf(host);
+        expect(card.querySelector('.cui-subagent-name')!.textContent).toBe('Research agent');
+        expect(card.querySelector('.cui-subagent-id')!.textContent).toBe('run-3');
+        expect(card.querySelector('.cui-subagent-task')!.textContent).toBe('Scan the repo for usages');
+        expect(card.querySelector('.cui-subagent-detail')!.textContent).toBe('step 3 of 7 — scanning');
+        expect(card.querySelector('.cui-subagent-progress-label')!.textContent).toBe('3/7');
+        view.clearMessages();
+        view.addMessage(runCard({ id: 'r4', status: 'done', progress: 'finalizing…' }));
+        expect(cardOf(host).querySelector('.cui-subagent-detail')!.textContent).toBe('finalizing…');
+    });
+
+    it('falls back to id when name is absent', () => {
+        const { host, view } = mount();
+        view.addMessage(runCard({ id: 'run-9', status: 'pending' }));
+        expect(cardOf(host).querySelector('.cui-subagent-name')!.textContent).toBe('run-9');
+        expect(cardOf(host).querySelector('.cui-subagent-id')).toBeNull();
+    });
+
+    it('prefers elapsedMs and derives elapsed from startedAt→finishedAt', () => {
+        const { host, view } = mount();
+        view.addMessage(runCard({ id: 'r1', status: 'done', elapsedMs: 75_000 }));
+        expect(cardOf(host).querySelector('.cui-subagent-elapsed')!.textContent).toBe('1m 15s');
+        view.clearMessages();
+        view.addMessage(runCard({
+            id: 'r2', status: 'done',
+            startedAt: '2025-01-01T10:00:00Z', finishedAt: '2025-01-01T10:00:12.400Z',
+        }));
+        expect(cardOf(host).querySelector('.cui-subagent-elapsed')!.textContent).toBe('12.4s');
+        view.clearMessages();
+        view.addMessage(runCard({ id: 'r3', status: 'done' })); // no timing fields
+        expect(cardOf(host).querySelector('.cui-subagent-elapsed')).toBeNull();
+    });
+
+    it('renders the usage chip via the shared usage formatter', () => {
+        const { host, view } = mount();
+        view.addMessage(runCard({
+            id: 'r1', status: 'done',
+            usage: { tokensIn: 2400, tokensOut: 640, cost: 0.0061, durationMs: 9300 },
+        }));
+        const chip = cardOf(host).querySelector('.cui-usage')!;
+        expect(chip.textContent).toContain('2.4k in');
+        expect(chip.textContent).toContain('$0.0061');
+        expect(chip.textContent).toContain('9.3s');
+    });
+
+    it('renders output inside a collapsed details', () => {
+        const { host, view } = mount();
+        view.addMessage(runCard({ id: 'r1', status: 'done', output: 'line one\nline two' }));
+        const details = cardOf(host).querySelector<HTMLDetailsElement>('details.cui-subagent-output')!;
+        expect(details).toBeTruthy();
+        expect(details.open).toBe(false);
+        expect(details.querySelector('.cui-subagent-output-pre')!.textContent).toBe('line one\nline two');
+    });
+
+    it('escapes card text instead of injecting HTML', () => {
+        const { host, view } = mount();
+        view.addMessage(runCard({
+            id: 'r1', name: '<img src=x>', task: '<b>task</b>',
+            status: 'done', output: '<script>alert(1)</script>',
+        }));
+        const card = cardOf(host);
+        expect(card.querySelector('img')).toBeNull();
+        expect(card.querySelector('script')).toBeNull();
+        expect(card.querySelector('.cui-subagent-name')!.textContent).toBe('<img src=x>');
+        expect(card.querySelector('.cui-subagent-output-pre')!.textContent).toContain('alert(1)');
+    });
+
+    it('renders through the canonical addInteraction path', () => {
+        const { host, view } = mount();
+        const wire = JSON.parse(JSON.stringify({
+            id: 'sa', role: 'assistant',
+            parts: [{ type: 'card', kind: 'subagent_run', data: { id: 'r1', status: 'running', elapsedMs: 1200 } }],
+        }));
+        view.addInteraction(wire);
+        expect(cardOf(host).querySelector('.cui-subagent-elapsed')!.textContent).toBe('1.2s');
+    });
+});
+
+/* ------------------------------------------------------------------ */
+/* Queued-message meta attribution                                     */
+/* ------------------------------------------------------------------ */
+
+describe('queued message meta', () => {
+    it('renders meta.agent as a muted suffix', () => {
+        const { host, view } = mount({}, { queue: true });
+        view.setQueue([
+            { id: 'q1', text: 'review the diff', meta: { agent: 'reviewer' } },
+            { id: 'q2', text: 'plain item' },
+        ]);
+        const metas = host.querySelectorAll('.cui-queue-meta');
+        expect(metas.length).toBe(1);
+        expect(metas[0]!.textContent).toContain('reviewer');
+    });
+
+    it('falls back to meta.author and ignores non-string values', () => {
+        const { host, view } = mount({}, { queue: true });
+        view.setQueue([
+            { id: 'q1', text: 'a', meta: { author: 'ops-bot' } },
+            { id: 'q2', text: 'b', meta: { agent: 42 } },
+            { id: 'q3', text: 'c', meta: {} },
+        ]);
+        const metas = host.querySelectorAll('.cui-queue-meta');
+        expect(metas.length).toBe(1);
+        expect(metas[0]!.textContent).toContain('ops-bot');
+    });
+});

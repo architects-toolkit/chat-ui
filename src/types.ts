@@ -72,7 +72,7 @@ export type EvidenceLevel = 'info' | 'warning' | 'error';
  */
 
 /** Built-in card kinds rendered natively by the view. */
-export type BuiltinCardKind = 'task_plan' | 'question' | 'approval' | 'model_select';
+export type BuiltinCardKind = 'task_plan' | 'question' | 'approval' | 'model_select' | 'subagent_run';
 
 /** `kind` of a `card` part — built-ins plus host-defined strings. */
 export type CardKind = BuiltinCardKind | (string & {});
@@ -144,6 +144,71 @@ export interface ModelSelectCardData {
     readonly action?: string;
 }
 
+/** Step progress inside a `subagent_run` card — `{ done, total }` or a free-form label. */
+export interface SubagentRunProgress {
+    readonly done: number;
+    readonly total: number;
+}
+
+/**
+ * `card` data for `kind: 'subagent_run'` — a background-agent run shown
+ * as a first-class card: status badge, name/id, elapsed time, optional
+ * task/detail/progress lines, a usage chip, a collapsible output
+ * excerpt and (while the run is still active) a cancel button.
+ *
+ * The view never runs timers: `elapsedMs` is preferred, otherwise the
+ * figure is derived once at render from `startedAt`→`finishedAt` (or
+ * `startedAt`→now while still active). Hosts refresh live cards by
+ * pushing `updateInteraction`/`updateMessage` patches.
+ *
+ * Cancelling reports `{ id, status }` through `transport.messageAction`
+ * under `action` (default `'subagent_cancel'`); the button only renders
+ * for the active states `pending`/`running`/`waiting` when
+ * `cancellable` is set and `features.messageActions` +
+ * `transport.messageAction` are wired.
+ */
+export interface SubagentRunData {
+    /** Run/agent id — echoed back in the cancel payload. */
+    readonly id: string;
+    /** Display label (falls back to `id`). */
+    readonly name?: string;
+    /** Goal/summary line. */
+    readonly task?: string;
+    /**
+     * Run lifecycle: `pending` | `running` | `waiting` | `done` |
+     * `failed` | `cancelled` | `timeout` — or any host-defined string,
+     * which renders a neutral badge (statuses starting with `waiting`
+     * share the waiting tone).
+     */
+    readonly status:
+        | 'pending'
+        | 'running'
+        | 'waiting'
+        | 'done'
+        | 'failed'
+        | 'cancelled'
+        | 'timeout'
+        | (string & {});
+    /** Extra muted line (current step, exit reason, …). */
+    readonly detail?: string;
+    /** ISO start time — with `finishedAt`, derives the elapsed figure. */
+    readonly startedAt?: string;
+    /** ISO finish time. */
+    readonly finishedAt?: string;
+    /** Working-time figure in ms; preferred over `startedAt`→`finishedAt`. */
+    readonly elapsedMs?: number;
+    /** Step progress — `{ done, total }` renders a meter, a string renders as-is. */
+    readonly progress?: SubagentRunProgress | string;
+    /** Cost/usage metrics — rendered with the shared usage-chip format. */
+    readonly usage?: UsageInfo;
+    /** Result/excerpt — collapsible `<details>`, line-clamped preview. */
+    readonly output?: string;
+    /** Show a cancel button while the run is in an active state. */
+    readonly cancellable?: boolean;
+    /** Action id reported to `messageAction` (default `'subagent_cancel'`). */
+    readonly action?: string;
+}
+
 /**
  * One cited source inside a `references` part — where an answer's data
  * came from (a web hit, a document, a tool output). Rendered as a
@@ -173,7 +238,8 @@ export type CardData =
     | TaskPlanCardData
     | QuestionCardData
     | ApprovalCardData
-    | ModelSelectCardData;
+    | ModelSelectCardData
+    | SubagentRunData;
 
 /**
  * A `card` part: the built-in kinds above are rendered natively; any
@@ -185,6 +251,7 @@ export type CardPart =
     | { readonly type: 'card'; readonly kind: 'question'; readonly data: QuestionCardData }
     | { readonly type: 'card'; readonly kind: 'approval'; readonly data: ApprovalCardData }
     | { readonly type: 'card'; readonly kind: 'model_select'; readonly data: ModelSelectCardData }
+    | { readonly type: 'card'; readonly kind: 'subagent_run'; readonly data: SubagentRunData }
     | { readonly type: 'card'; readonly kind: CardKind; readonly data?: unknown };
 
 /**
@@ -233,6 +300,12 @@ export interface QueuedMessage {
     readonly id: string;
     readonly text: string;
     readonly createdAt?: number;
+    /**
+     * Free-form host data (attribution, scheduling, …). When `meta.agent`
+     * or `meta.author` is a string it renders as a small muted suffix —
+     * e.g. which agent the queued item belongs to.
+     */
+    readonly meta?: Readonly<Record<string, unknown>>;
 }
 
 /** What the user typed/picked to send. */

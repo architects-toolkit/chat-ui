@@ -41,6 +41,7 @@ const EVERY_PART: readonly CanonicalPart[] = [
     { type: 'evidence', text: 'note', level: 'warning' },
     { type: 'references', items: [{ id: 1, title: 'Src', url: 'https://x/ref', verified: true }] },
     { type: 'card', kind: 'task_plan', data: { steps: [{ label: 's' }] } },
+    { type: 'card', kind: 'subagent_run', data: { id: 'r1', status: 'running', elapsedMs: 1200 } },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -282,6 +283,8 @@ describe('canonical part round-trip render', () => {
         expect(sel('.cui-references a.cui-ref-title')).toBeTruthy();
         expect(sel('.cui-ref-verified')).toBeTruthy();
         expect(sel('.cui-card[data-kind="task_plan"]')).toBeTruthy();
+        expect(sel('.cui-card[data-kind="subagent_run"]')).toBeTruthy();
+        expect(sel('.cui-card[data-kind="subagent_run"] .cui-subagent-badge')).toBeTruthy();
     });
 });
 
