@@ -158,6 +158,8 @@ function inline(escaped: string): string {
 const HR = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const UL_ITEM = /^\s*[-*+]\s+(.*)$/;
 const OL_ITEM = /^\s*\d{1,9}[.)]\s+(.*)$/;
+const OL_NUM = /^\s*(\d{1,9})[.)]\s/;
+const indentOf = (l: string) => l.length - l.trimStart().length;
 const TASK_ITEM = /^\[( |x|X)\]\s+(.*)$/;
 const HEADING = /^#{1,6}\s+(.*)$/;
 const TABLE_SEP = /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/;
@@ -211,11 +213,13 @@ export function renderMarkdown(markdown: string, options?: RenderOptions): strin
     const lines = markdown.replace(/\r\n?/g, '\n').split('\n');
     let i = 0;
 
-    const list: { tag: 'ul' | 'ol'; items: string[] } = { tag: 'ul', items: [] };
+    const list: { tag: 'ul' | 'ol'; items: string[]; indent: number; start?: number | undefined } = { tag: 'ul', items: [], indent: 0 };
     const flushList = () => {
         if (!list.items.length) return;
-        blocks.push(`<${list.tag}>${list.items.map((item) => `<li>${item}</li>`).join('')}</${list.tag}>`);
+        const start = list.tag === 'ol' && list.start != null && list.start !== 1 ? ` start="${list.start}"` : '';
+        blocks.push(`<${list.tag}${start}>${list.items.map((item) => `<li>${item}</li>`).join('')}</${list.tag}>`);
         list.items.length = 0;
+        list.start = undefined;
     };
 
     while (i < lines.length) {
@@ -236,7 +240,17 @@ export function renderMarkdown(markdown: string, options?: RenderOptions): strin
 
         const trimmed = line.trim();
         if (trimmed === '') {
-            flushList();
+            // A blank line only ends an open list when the next non-blank
+            // line is not a list item at this list's level or deeper —
+            // otherwise "1. a\n\n2. b" would split the <ol> and restart
+            // numbering (loose lists stay one list).
+            if (list.items.length) {
+                let j = i + 1;
+                while (j < lines.length && (lines[j] ?? '').trim() === '') j++;
+                const next = lines[j] ?? '';
+                const continues = (UL_ITEM.test(next) || OL_ITEM.test(next)) && indentOf(next) >= list.indent;
+                if (!continues) flushList();
+            }
             i++;
             continue;
         }
@@ -294,8 +308,32 @@ export function renderMarkdown(markdown: string, options?: RenderOptions): strin
         const olMatch = ulMatch ? null : OL_ITEM.exec(line);
         if (ulMatch || olMatch) {
             const tag = ulMatch ? 'ul' : 'ol';
-            if (list.tag !== tag) flushList();
-            list.tag = tag;
+            const indent = indentOf(line);
+
+            if (list.items.length && indent > list.indent) {
+                // Deeper-indented line = content nested inside the last
+                // item (e.g. "- sub" under "1. item"). Gather the whole
+                // sub-block and render it inside the current <li> instead
+                // of flushing — a same-level <ul> between numbered items
+                // would close the <ol> and restart numbering at 1.
+                const sub: string[] = [];
+                while (i < lines.length && (lines[i] ?? '').trim() !== '' && indentOf(lines[i] ?? '') > list.indent) {
+                    sub.push(lines[i] ?? '');
+                    i++;
+                }
+                const minIndent = Math.min(...sub.map((l) => indentOf(l)));
+                const nested = renderMarkdown(sub.map((l) => l.slice(minIndent)).join('\n'), options);
+                list.items[list.items.length - 1] += nested;
+                continue;
+            }
+
+            if (list.tag !== tag || (list.items.length && indent < list.indent)) flushList();
+            if (!list.items.length) {
+                list.tag = tag;
+                list.indent = indent;
+                const num = olMatch ? OL_NUM.exec(line)?.[1] : undefined;
+                if (num && num !== '1') list.start = Number(num);
+            }
             let item = (ulMatch ?? olMatch)?.[1] ?? '';
             const task = TASK_ITEM.exec(item);
             if (task) {
