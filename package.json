@@ -1,0 +1,51 @@
+{
+  "name": "@architects-toolkit/chat-ui",
+  "version": "0.1.0",
+  "description": "Framework-agnostic, transport-agnostic embeddable chat view for AI assistants and agent UIs.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@10.28.0",
+  "keywords": [
+    "chat",
+    "chat-ui",
+    "llm",
+    "ai",
+    "webview",
+    "embeddable",
+    "streaming",
+    "agents"
+  ],
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./element": {
+      "types": "./dist/adapters/element.d.ts",
+      "import": "./dist/adapters/element.js",
+      "require": "./dist/adapters/element.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/adapters/element.ts --format esm,cjs --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "dev": "vite"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

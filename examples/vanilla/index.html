@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>chat-ui — vanilla demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
+    #app { height: 100dvh; max-width: 760px; margin: 0 auto; border: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module">
+    import { createChatView } from '../../dist/index.js';
+
+    // A mock transport: echoes user text, then streams a canned reply.
+    const queue = [];
+    const transport = {
+      send({ text }) {
+        view.addMessage({ id: crypto.randomUUID(), role: 'user', status: 'done', parts: [{ type: 'text', text }] });
+        view.setProcessing(true);
+        view.setStatus('Thinking…');
+        const key = 'demo-' + Date.now();
+        view.addMessage({ id: key, domKey: key, role: 'assistant', status: 'streaming', parts: [] });
+        const chunks = 'This is a **streamed** demo reply from the mock transport.'.split(' ');
+        let i = 0;
+        const tick = () => {
+          if (i < chunks.length) {
+            view.appendDelta(key, (i ? ' ' : '') + chunks[i++]);
+            setTimeout(tick, 80);
+          } else {
+            view.updateMessage(key, { status: 'done' });
+            view.setProcessing(false);
+            view.setStatus('Ready');
+          }
+        };
+        tick();
+      },
+      cancel() { view.setProcessing(false); view.setStatus('Cancelled'); },
+      editQueued(id, text) { const q = queue.find(x => x.id === id); if (q) { q.text = text; view.setQueue(queue); } },
+      sendQueuedNow(id) {
+        const i = queue.findIndex(x => x.id === id);
+        if (i >= 0) { const [q] = queue.splice(i, 1); view.setQueue(queue); transport.send({ text: q.text }); }
+      },
+      removeQueued(id) { const i = queue.findIndex(x => x.id === id); if (i >= 0) { queue.splice(i, 1); view.setQueue(queue); } },
+    };
+
+    const view = createChatView(document.getElementById('app'), {
+      transport,
+      features: { queue: true, contextCard: true, quoteChip: true },
+      placeholder: 'Say something…',
+    });
+
+    view.setStatus('Ready');
+    view.setContextUsage({ percent: 23, elapsedMs: 4200 });
+    view.setQueue([{ id: 'q1', text: 'Tell me about context cards' }]);
+    view.addMessage({ id: 'w', role: 'assistant', parts: [{ type: 'markdown', text: 'Hi! Try the **queue**, the *context card*, or `view.stageQuote(...)`.' }] });
+  </script>
+</body>
+</html>
