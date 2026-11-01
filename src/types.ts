@@ -10,19 +10,176 @@
 /** Who authored a message. `tool` is a first-class role for call/result parts. */
 export type ChatRole = 'user' | 'assistant' | 'system' | 'tool';
 
+/* ------------------------------------------------------------------ */
+/* Attachments                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Logical kind of an attachment. `'file'` is the generic bucket; media
+ * kinds let transports and renderers treat payloads appropriately.
+ * Open string union — hosts may declare their own kinds.
+ */
+export type AttachmentKind = 'file' | 'image' | 'audio' | 'video' | (string & {});
+
+/**
+ * A typed attachment reference. Wraps an optional `File` when the item was
+ * picked locally, or describes remote/recorded media by `url` — e.g. a
+ * speech-to-text recording staged by the host.
+ */
+export interface ChatAttachment {
+    readonly kind: AttachmentKind;
+    readonly name: string;
+    readonly mimeType?: string;
+    readonly size?: number;
+    /** Preview/fetch URL — `blob:`, `data:`, `http(s):` are rendered. */
+    readonly url?: string;
+    /** The original `File` when the attachment was picked in the composer. */
+    readonly file?: File;
+    /** Free-form host data (upload id, duration, waveform, …). */
+    readonly meta?: Readonly<Record<string, unknown>>;
+}
+
+/** What the composer can hold: a picked `File` or a typed attachment ref. */
+export type SubmitAttachment = File | ChatAttachment;
+
+/* ------------------------------------------------------------------ */
+/* Message parts                                                       */
+/* ------------------------------------------------------------------ */
+
+/** Per-turn cost/usage figure shown as a compact chip. */
+export interface UsageInfo {
+    /** Optional label prefix, e.g. a model or turn name. */
+    readonly label?: string;
+    readonly tokensIn?: number;
+    readonly tokensOut?: number;
+    /** Monetary cost for the turn, in `currency` units. */
+    readonly cost?: number;
+    /** ISO-ish currency hint rendered next to `cost` (default `$`). */
+    readonly currency?: string;
+    readonly durationMs?: number;
+}
+
+/** Severity for `evidence` lines — drives color only. */
+export type EvidenceLevel = 'info' | 'warning' | 'error';
+
+/* ---- Card kinds -------------------------------------------------- */
+/*
+ * A small set of generic, well-typed card kinds covers the common agent
+ * surfaces. Hosts with bespoke needs register a `card:<kind>` part
+ * renderer instead of requesting new kinds.
+ */
+
+/** Built-in card kinds rendered natively by the view. */
+export type BuiltinCardKind = 'task_plan' | 'question' | 'approval' | 'model_select';
+
+/** `kind` of a `card` part — built-ins plus host-defined strings. */
+export type CardKind = BuiltinCardKind | (string & {});
+
+/** One step inside a `task_plan` card. */
+export interface TaskPlanStep {
+    readonly label: string;
+    readonly status?: 'pending' | 'active' | 'done' | 'error';
+    readonly detail?: string;
+}
+
+/** `card` data for `kind: 'task_plan'` — an ordered plan/todo list. */
+export interface TaskPlanCardData {
+    readonly title?: string;
+    readonly steps: readonly TaskPlanStep[];
+}
+
+/**
+ * `card` data for `kind: 'question'` — asks the user something inline.
+ * Rendered with optional quick-pick options and/or a free-text input.
+ * Submission reports `{ answer }` through `transport.messageAction`.
+ */
+export interface QuestionCardData {
+    readonly question: string;
+    /** Quick-pick answers rendered as chips (single select). */
+    readonly options?: readonly string[];
+    /** Show a free-text input (default true when `options` absent). */
+    readonly allowFreeText?: boolean;
+    readonly placeholder?: string;
+    readonly submitLabel?: string;
+    /** Action id reported to `messageAction` (default `'question'`). */
+    readonly action?: string;
+    /** When set, the card renders in its answered state. */
+    readonly answer?: string;
+}
+
+/**
+ * `card` data for `kind: 'approval'` — a consent/confirmation prompt.
+ * Decisions report `{ decision: 'approved' | 'rejected' }` through
+ * `transport.messageAction`.
+ */
+export interface ApprovalCardData {
+    readonly title?: string;
+    readonly description?: string;
+    readonly approveLabel?: string;
+    readonly rejectLabel?: string;
+    /** Action id reported to `messageAction` (default `'approval'`). */
+    readonly action?: string;
+    readonly state?: 'pending' | 'approved' | 'rejected';
+}
+
+/** A selectable model entry (`model_select` card + composer picker). */
+export interface ChatModelOption {
+    readonly id: string;
+    readonly label?: string;
+    /** Secondary text rendered after the label (e.g. price, capability). */
+    readonly hint?: string;
+}
+
+/**
+ * `card` data for `kind: 'model_select'` — an inline model `<select>`.
+ * Selection reports `{ model }` through `transport.messageAction`.
+ */
+export interface ModelSelectCardData {
+    readonly label?: string;
+    readonly options: readonly (string | ChatModelOption)[];
+    readonly selected?: string;
+    /** Action id reported to `messageAction` (default `'model_select'`). */
+    readonly action?: string;
+}
+
+/** Union of the built-in card payloads. */
+export type CardData =
+    | TaskPlanCardData
+    | QuestionCardData
+    | ApprovalCardData
+    | ModelSelectCardData;
+
+/**
+ * A `card` part: the built-in kinds above are rendered natively; any
+ * other `kind` resolves through `partRenderers['card:<kind>']` then
+ * `partRenderers['card']`.
+ */
+export type CardPart =
+    | { readonly type: 'card'; readonly kind: 'task_plan'; readonly data: TaskPlanCardData }
+    | { readonly type: 'card'; readonly kind: 'question'; readonly data: QuestionCardData }
+    | { readonly type: 'card'; readonly kind: 'approval'; readonly data: ApprovalCardData }
+    | { readonly type: 'card'; readonly kind: 'model_select'; readonly data: ModelSelectCardData }
+    | { readonly type: 'card'; readonly kind: CardKind; readonly data?: unknown };
+
 /**
  * A renderable fragment of a message. The built-in renderers cover the
- * common parts; hosts register custom renderers per `type` to draw
- * application-specific parts (approval cards, citations, …).
+ * common parts; hosts register custom renderers per `type` (or per
+ * `card:<kind>`) to draw application-specific parts.
  */
 export type MessagePart =
     | { readonly type: 'text'; readonly text: string }
     | { readonly type: 'markdown'; readonly text: string }
     | { readonly type: 'html'; readonly html: string }
-    | { readonly type: 'image'; readonly src: string; readonly alt?: string }
+    | { readonly type: 'image'; readonly src: string; readonly alt?: string; readonly name?: string }
+    | { readonly type: 'audio'; readonly src: string; readonly name?: string; readonly mimeType?: string }
+    | { readonly type: 'video'; readonly src: string; readonly name?: string; readonly mimeType?: string; readonly poster?: string }
+    | { readonly type: 'quote'; readonly text: string; readonly source?: string }
+    | { readonly type: 'suggestions'; readonly prompts: readonly string[] }
+    | { readonly type: 'usage'; readonly usage: UsageInfo }
+    | { readonly type: 'evidence'; readonly text: string; readonly detail?: string; readonly level?: EvidenceLevel }
     | { readonly type: 'tool_call'; readonly name: string; readonly args?: string; readonly status?: 'pending' | 'running' | 'done' | 'error' }
     | { readonly type: 'tool_result'; readonly name?: string; readonly content: string; readonly isError?: boolean }
-    | { readonly type: 'card'; readonly kind: string; readonly data?: unknown }
+    | CardPart
     | { readonly type: 'divider' };
 
 /** Lifecycle of a message; drives pending/streaming visuals. */
@@ -36,7 +193,11 @@ export interface ChatMessage {
     readonly status?: ChatMessageStatus;
     /** Optional stable key for incremental updates (add/edit/replace). */
     readonly domKey?: string;
-    /** Free-form host data (turn id, tokens, cost, agent label, …). */
+    /**
+     * Free-form host data (turn id, actions, usage, agent label, …).
+     * `meta.actions` feeds the actions row (feature `messageActions`);
+     * `meta.usage` feeds the cost chip (feature `costChip`).
+     */
     readonly meta?: Readonly<Record<string, unknown>>;
 }
 
@@ -50,8 +211,17 @@ export interface QueuedMessage {
 /** What the user typed/picked to send. */
 export interface ChatSubmit {
     readonly text: string;
-    readonly attachments?: readonly File[];
+    /**
+     * Picked files arrive as `File`; host-staged media (recordings,
+     * remote refs) arrives as typed `ChatAttachment` values. Use the
+     * exported `isChatAttachment` guard to discriminate.
+     */
+    readonly attachments?: readonly SubmitAttachment[];
 }
+
+/* ------------------------------------------------------------------ */
+/* Transport + features                                                */
+/* ------------------------------------------------------------------ */
 
 /**
  * Host-implemented bridge between user intent and the conversation engine.
@@ -69,10 +239,24 @@ export interface ChatTransport {
     sendQueuedNow?(id: string): void;
     /** Queue feature: drop a queued message. */
     removeQueued?(id: string): void;
-    /** Action-parts feature: an in-message action button was activated
-     *  (approve/reject, answer a question card, …). */
+    /**
+     * `messageActions` feature: an interactive part was activated —
+     * approve/reject buttons, question-card answers, model_select
+     * changes, suggestion picks, actions rows. `action` names the
+     * interaction; `payload` carries the value (e.g. `{ answer }`,
+     * `{ decision }`, `{ model }`, `{ text }`).
+     */
     messageAction?(messageId: string, action: string, payload?: unknown): void;
+    /** `modelPicker` feature: the composer model selector changed. */
+    selectModel?(modelId: string): void;
 }
+
+/**
+ * Input affordances the host supports. Reserved for capability
+ * negotiation — e.g. `'audio'` tells the host speech input may be
+ * staged as `ChatAttachment`s even though the view ships no mic.
+ */
+export type InputMode = 'text' | 'attachments' | 'audio' | (string & {});
 
 /** Capability map — every UI region beyond list+composer is opt-in. */
 export interface ChatFeatures {
@@ -82,11 +266,23 @@ export interface ChatFeatures {
     readonly contextCard?: boolean;
     /** Show a staged quote chip above the composer. */
     readonly quoteChip?: boolean;
-    /** Enable the attachment button; files flow through ChatSubmit. */
+    /** Enable the attachment button + staged-attachment preview strip. */
     readonly attachments?: boolean;
-    /** Show a per-message cost/meta chip fed from message.meta. */
+    /**
+     * `accept` attribute for the attachment file picker
+     * (e.g. `'image/*'`, `'audio/*,image/*'`).
+     */
+    readonly attachmentAccept?: string;
+    /**
+     * Declared input affordances. When present without `'attachments'`
+     * the attachment button is hidden even if `attachments` is true.
+     */
+    readonly inputModes?: readonly InputMode[];
+    /** Show a compact model `<select>` in the composer (feed via `setModels`). */
+    readonly modelPicker?: boolean;
+    /** Show a per-message cost/usage chip fed from `meta.usage`. */
     readonly costChip?: boolean;
-    /** Render action buttons inside `card` parts (approve/reject, …). */
+    /** Enable interactive controls in parts (approval, question, model_select, suggestions, actions rows). */
     readonly messageActions?: boolean;
 }
 
@@ -98,7 +294,21 @@ export interface ChatViewOptions {
     readonly placeholder?: string;
     /** When true, no built-in stylesheet is injected (full host styling). */
     readonly unstyled?: boolean;
-    /** Custom renderers for MessagePart.type values not handled natively. */
+    /**
+     * Markdown → HTML renderer used for `markdown` parts and the
+     * streaming tail. Default: the bundled dependency-free renderer.
+     */
+    readonly renderMarkdown?: (markdown: string) => string;
+    /**
+     * Part type `appendDelta` creates when the target message has no
+     * `text`/`markdown` part yet. Default `'text'`; use `'markdown'`
+     * when the stream is known to be markdown.
+     */
+    readonly deltaFormat?: 'text' | 'markdown';
+    /**
+     * Custom renderers. Keyed by `part.type`; for `card` parts the more
+     * specific `card:<kind>` key is consulted first, then `'card'`.
+     */
     readonly partRenderers?: Readonly<Record<string, PartRenderer>>;
 }
 
@@ -116,7 +326,13 @@ export interface ChatViewHandle {
     addMessage(message: ChatMessage): void;
     /** Patch an existing message in place. */
     updateMessage(domKey: string, message: Partial<ChatMessage>): void;
-    /** Streaming helper: append text to a 'text' part of a message. */
+    /**
+     * Streaming helper: append text to the last `text`/`markdown` part
+     * (creates one of `options.deltaFormat` type when absent). Markdown
+     * targets render incrementally — complete paragraphs freeze, the
+     * unfinished tail re-renders — so partial `**`/` ``` `/link syntax
+     * never produces broken markup.
+     */
     appendDelta(domKey: string, delta: string): void;
     removeMessage(domKey: string): void;
     clearMessages(): void;
@@ -133,5 +349,26 @@ export interface ChatViewHandle {
     /** Currently staged quote text, or null. */
     getQuote(): string | null;
     clearQuote(): void;
+    /**
+     * Feed the composer model picker (requires features.modelPicker).
+     * Pass an empty list to keep the picker hidden.
+     */
+    setModels(models: readonly ChatModelOption[], selected?: string): void;
+    /** Id of the currently selected composer model, if any. */
+    getSelectedModel(): string | null;
+    /**
+     * Stage attachments into the composer strip (requires
+     * features.attachments). Accepts `File`s and `ChatAttachment`s.
+     */
+    stageAttachments(items: readonly SubmitAttachment[]): void;
+    /** Attachments currently staged in the composer. */
+    getAttachments(): readonly SubmitAttachment[];
+    clearAttachments(): void;
+    /**
+     * Scroll the message list. With `force`, always jumps to the
+     * bottom; otherwise scrolls only when the user is already pinned
+     * to the bottom (scroll anchoring).
+     */
+    scrollToBottom(force?: boolean): void;
     destroy(): void;
 }

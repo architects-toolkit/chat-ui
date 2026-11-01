@@ -14,23 +14,49 @@
   <script type="module">
     import { createChatView } from '../../dist/index.js';
 
+    const STREAMED = [
+      'Here is a **markdown** stream with a task list:\n\n',
+      '- [x] mount the view\n- [ ] ship the demo\n\n',
+      '```ts\nconst view = createChatView(el, opts);\n```\n\n',
+      'And a table:\n\n| col | val |\n|---|---|\n| a | 1 |\n',
+    ];
+
     // A mock transport: echoes user text, then streams a canned reply.
     const queue = [];
     const transport = {
-      send({ text }) {
-        view.addMessage({ id: crypto.randomUUID(), role: 'user', status: 'done', parts: [{ type: 'text', text }] });
+      send({ text, attachments }) {
+        view.addMessage({
+          id: crypto.randomUUID(),
+          role: 'user',
+          status: 'done',
+          parts: [
+            { type: 'text', text: text || '(attachments)' },
+            ...(attachments ?? []).map((a) => a instanceof File && a.type.startsWith('image/')
+              ? { type: 'image', src: URL.createObjectURL(a), name: a.name }
+              : { type: 'evidence', text: `attached: ${a.name ?? a.kind}` }),
+          ],
+        });
         view.setProcessing(true);
         view.setStatus('Thinking…');
         const key = 'demo-' + Date.now();
-        view.addMessage({ id: key, domKey: key, role: 'assistant', status: 'streaming', parts: [] });
-        const chunks = 'This is a **streamed** demo reply from the mock transport.'.split(' ');
+        view.addMessage({
+          id: key, domKey: key, role: 'assistant', status: 'streaming',
+          parts: [{ type: 'markdown', text: '' }],
+        });
         let i = 0;
         const tick = () => {
-          if (i < chunks.length) {
-            view.appendDelta(key, (i ? ' ' : '') + chunks[i++]);
-            setTimeout(tick, 80);
+          if (i < STREAMED.length) {
+            view.appendDelta(key, STREAMED[i++]);
+            setTimeout(tick, 350);
           } else {
-            view.updateMessage(key, { status: 'done' });
+            view.updateMessage(key, {
+              status: 'done',
+              parts: [
+                { type: 'markdown', text: STREAMED.join('') },
+                { type: 'usage', usage: { tokensIn: 812, tokensOut: 96, cost: 0.0031, durationMs: 2400 } },
+                { type: 'suggestions', prompts: ['Show an approval card', 'Ask me a question'] },
+              ],
+            });
             view.setProcessing(false);
             view.setStatus('Ready');
           }
@@ -44,18 +70,67 @@
         if (i >= 0) { const [q] = queue.splice(i, 1); view.setQueue(queue); transport.send({ text: q.text }); }
       },
       removeQueued(id) { const i = queue.findIndex(x => x.id === id); if (i >= 0) { queue.splice(i, 1); view.setQueue(queue); } },
+      selectModel(id) { view.setStatus(`Model: ${id}`); },
+      messageAction(messageId, action, payload) {
+        view.setStatus(`action ${action}: ${JSON.stringify(payload)}`);
+      },
     };
 
     const view = createChatView(document.getElementById('app'), {
       transport,
-      features: { queue: true, contextCard: true, quoteChip: true },
+      features: {
+        queue: true, contextCard: true, quoteChip: true,
+        attachments: true, attachmentAccept: 'image/*,.txt',
+        modelPicker: true, messageActions: true, costChip: true,
+        inputModes: ['text', 'attachments'],
+      },
       placeholder: 'Say something…',
+      deltaFormat: 'markdown',
     });
 
     view.setStatus('Ready');
+    view.setModels([{ id: 'fast' }, { id: 'pro', label: 'Pro', hint: '2× cost' }], 'fast');
     view.setContextUsage({ percent: 23, elapsedMs: 4200 });
     view.setQueue([{ id: 'q1', text: 'Tell me about context cards' }]);
-    view.addMessage({ id: 'w', role: 'assistant', parts: [{ type: 'markdown', text: 'Hi! Try the **queue**, the *context card*, or `view.stageQuote(...)`.' }] });
+    view.addMessage({
+      id: 'plan', role: 'assistant',
+      parts: [
+        {
+          type: 'card', kind: 'task_plan',
+          data: {
+            title: 'Demo plan',
+            steps: [
+              { label: 'Render welcome parts', status: 'done' },
+              { label: 'Show interactive cards', status: 'active' },
+              { label: 'Stream a reply', status: 'pending' },
+            ],
+          },
+        },
+      ],
+    });
+    view.addMessage({
+      id: 'ask', role: 'assistant',
+      parts: [
+        { type: 'evidence', text: 'background agent ready', level: 'info' },
+        {
+          type: 'card', kind: 'approval',
+          data: { title: 'Allow demo write?', description: 'Grant the mock agent permission to write files.' },
+        },
+        {
+          type: 'card', kind: 'question',
+          data: { question: 'Which environment?', options: ['dev', 'staging', 'prod'], allowFreeText: true },
+        },
+        { type: 'quote', text: 'The view performs zero I/O — the host drives everything.', source: 'DESIGN.md' },
+        {
+          type: 'card', kind: 'model_select',
+          data: { label: 'Inline model', options: ['fast', 'pro'], selected: 'fast' },
+        },
+      ],
+    });
+    view.addMessage({
+      id: 'w', role: 'assistant',
+      parts: [{ type: 'markdown', text: 'Hi! Try the **queue**, the *context card*, image attachments 📎, or `view.stageQuote(...)`.' }],
+    });
   </script>
 </body>
 </html>

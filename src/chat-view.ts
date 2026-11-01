@@ -5,20 +5,46 @@
  * browser app, an embedded webview page, an Electron window, a widget.
  * The host drives it through ChatViewHandle; the view reports user intent
  * through ChatTransport. Rendering is plain DOM — no framework runtime.
+ *
+ * Interaction hardening ported from Deep Chat
+ * (https://github.com/OvidijusParsiunas/deep-chat, MIT — see
+ * THIRD_PARTY_NOTICES.md):
+ *   - scroll anchoring: capture "at bottom" before mutating the DOM and
+ *     only re-pin when the user has not scrolled away;
+ *   - IME composition guard: Enter/Escape are ignored between
+ *     compositionstart and compositionend.
  */
 
-import { renderMarkdown } from './markdown.js';
+import { MarkdownStreamRenderer } from './markdown-stream.js';
+import { renderMarkdown, safeEmbedUrl } from './markdown.js';
+import {
+    attachmentKindOf,
+    attachmentNameOf,
+    createAttachmentPreview,
+} from './attachments.js';
+import type { AttachmentPreview } from './attachments.js';
 import { DEFAULT_STYLES } from './styles.js';
 import type {
+    ApprovalCardData,
     ChatMessage,
+    ChatModelOption,
+    ChatSubmit,
     ChatViewHandle,
     ChatViewOptions,
+    EvidenceLevel,
     MessagePart,
+    ModelSelectCardData,
     PartRenderer,
+    QuestionCardData,
     QueuedMessage,
+    SubmitAttachment,
+    TaskPlanCardData,
+    UsageInfo,
 } from './types.js';
 
 const NS = 'chat-ui';
+/** Distance-from-bottom (px) still considered "pinned" — generous for late-loading content. */
+const NEAR_BOTTOM_PX = 24;
 
 function el(doc: Document, tag: string, cls?: string, text?: string): HTMLElement {
     const node = doc.createElement(tag);
@@ -29,11 +55,42 @@ function el(doc: Document, tag: string, cls?: string, text?: string): HTMLElemen
 
 const partKey = (message: ChatMessage): string => message.domKey ?? message.id;
 
+const compactNumber = (n: number): string =>
+    n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n);
+
+function usageText(usage: UsageInfo): string {
+    const bits: string[] = [];
+    if (usage.label) bits.push(usage.label);
+    if (usage.tokensIn != null) bits.push(`${compactNumber(usage.tokensIn)} in`);
+    if (usage.tokensOut != null) bits.push(`${compactNumber(usage.tokensOut)} out`);
+    if (usage.cost != null) bits.push(`${usage.currency ?? '$'}${usage.cost.toFixed(4)}`);
+    if (usage.durationMs != null) bits.push(`${(usage.durationMs / 1000).toFixed(1)}s`);
+    return bits.join(' · ');
+}
+
+interface MessageEntry {
+    message: ChatMessage;
+    node: HTMLElement;
+    body: HTMLElement;
+    /** Rendered elements aligned with `message.parts` (null = unrendered). */
+    partEls: (HTMLElement | null)[];
+}
+
+interface StreamState {
+    renderer: MarkdownStreamRenderer;
+    el: HTMLElement;
+}
+
 export function createChatView(container: HTMLElement, options: ChatViewOptions): ChatViewHandle {
     const doc = container.ownerDocument;
+    const win = doc.defaultView;
     const features = options.features ?? {};
     const customRenderers: Readonly<Record<string, PartRenderer>> = options.partRenderers ?? {};
     const transport = options.transport;
+    const mdRender = (md: string): string => (options.renderMarkdown ?? renderMarkdown)(md);
+    const attachmentsEnabled =
+        features.attachments === true &&
+        (!features.inputModes || features.inputModes.includes('attachments'));
 
     if (!options.unstyled) {
         const style = doc.createElement('style');
@@ -54,9 +111,13 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
     const contextValue = el(doc, 'span');
     contextCard.append(contextLabel, contextMeter, contextValue);
 
+    const messagesWrap = el(doc, 'div', 'cui-messages-wrap');
     const messages = el(doc, 'div', 'cui-messages');
     messages.setAttribute('role', 'log');
     messages.setAttribute('aria-live', 'polite');
+    const jump = el(doc, 'button', 'cui-jump', '↓ Latest') as HTMLButtonElement;
+    jump.type = 'button';
+    messagesWrap.append(messages, jump);
 
     const queuePanel = el(doc, 'div', 'cui-queue');
 
@@ -66,14 +127,20 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
     quoteDismiss.setAttribute('aria-label', 'Remove quote');
     quote.append(quoteText, quoteDismiss);
 
+    const attachStrip = el(doc, 'div', 'cui-attachments');
+
     const composer = el(doc, 'div', 'cui-composer');
     const input = doc.createElement('textarea');
     input.className = 'cui-input';
     input.rows = 1;
     input.placeholder = options.placeholder ?? 'Type a message…';
+    const modelSelect = doc.createElement('select');
+    modelSelect.className = 'cui-model';
+    modelSelect.hidden = true;
+    modelSelect.setAttribute('aria-label', 'Model');
     const attach = el(doc, 'button', 'cui-attach', '📎') as HTMLButtonElement;
     attach.type = 'button';
-    attach.hidden = !features.attachments;
+    attach.hidden = !attachmentsEnabled;
     const send = el(doc, 'button', 'cui-send', 'Send') as HTMLButtonElement;
     send.type = 'button';
     const cancel = el(doc, 'button', 'cui-cancel', 'Stop') as HTMLButtonElement;
@@ -82,17 +149,333 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
     fileInput.type = 'file';
     fileInput.multiple = true;
     fileInput.hidden = true;
-    composer.append(input, attach, send, cancel, fileInput);
-    root.append(statusBar, contextCard, messages, queuePanel, quote, composer);
+    if (features.attachmentAccept) fileInput.accept = features.attachmentAccept;
+    composer.append(modelSelect, input, attach, send, cancel, fileInput);
+    root.append(statusBar, contextCard, messagesWrap, queuePanel, quote, attachStrip, composer);
     container.appendChild(root);
 
-    const byKey = new Map<string, { message: ChatMessage; node: HTMLElement; body: HTMLElement }>();
+    const byKey = new Map<string, MessageEntry>();
+    const streams = new Map<string, StreamState>();
     let stagedQuote: string | null = null;
+    let staged: SubmitAttachment[] = [];
+    let previews: AttachmentPreview[] = [];
     let destroyed = false;
 
-    const scrollToBottom = () => { messages.scrollTop = messages.scrollHeight; };
+    /* ---------------------------------------------------------------- */
+    /* Scroll anchoring — ported from Deep Chat's MessagesBase approach:  */
+    /* a "pinned" flag driven by the scroll position; content growth      */
+    /* only re-pins when the user has not scrolled away. Instant          */
+    /* scrollTop assignment = no motion, so prefers-reduced-motion is     */
+    /* respected by construction.                                         */
+    /* ---------------------------------------------------------------- */
+
+    let pinned = true;
+    const isNearBottom = (): boolean =>
+        messages.scrollHeight - messages.clientHeight - messages.scrollTop <= NEAR_BOTTOM_PX;
+    const applyScroll = (force = false): void => {
+        if (force || pinned) {
+            messages.scrollTop = messages.scrollHeight;
+            pinned = true;
+        }
+        jump.classList.toggle('visible', !pinned);
+    };
+    messages.addEventListener('scroll', () => {
+        pinned = isNearBottom();
+        jump.classList.toggle('visible', !pinned);
+    });
+    jump.addEventListener('click', () => applyScroll(true));
+
+    /* ---------------------------------------------------------------- */
+    /* Composer autosize                                                  */
+    /* ---------------------------------------------------------------- */
+
+    const autosize = (): void => {
+        input.style.height = 'auto';
+        const max = parseFloat(win?.getComputedStyle(input).maxHeight ?? '') || 160;
+        const next = Math.min(input.scrollHeight, max);
+        input.style.height = `${next}px`;
+        input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
+    };
+
+    /* ---------------------------------------------------------------- */
+    /* Attachments                                                        */
+    /* ---------------------------------------------------------------- */
+
+    const revokePreviews = (): void => {
+        for (const p of previews) {
+            try {
+                p.revoke();
+            } catch {
+                /* ignore */
+            }
+        }
+        previews = [];
+    };
+
+    let previewGen = 0;
+    const renderAttachmentStrip = (): void => {
+        revokePreviews();
+        attachStrip.replaceChildren();
+        attachStrip.classList.toggle('visible', staged.length > 0);
+        const gen = ++previewGen;
+        staged.forEach((item, i) => {
+            const kind = attachmentKindOf(item);
+            const chip = el(doc, 'div', 'cui-attachment');
+            chip.dataset.kind = kind;
+            if (kind === 'image') {
+                const img = doc.createElement('img');
+                img.className = 'cui-attachment-thumb';
+                img.alt = attachmentNameOf(item);
+                void createAttachmentPreview(item).then((p) => {
+                    // stale generation: strip re-rendered since this resolved
+                    if (!p || gen !== previewGen) {
+                        p?.revoke();
+                        return;
+                    }
+                    previews.push(p);
+                    img.src = p.url;
+                });
+                chip.appendChild(img);
+            } else {
+                const icon = kind === 'audio' ? '🔊' : kind === 'video' ? '🎬' : '📄';
+                chip.appendChild(el(doc, 'span', 'cui-attachment-icon', icon));
+            }
+            chip.appendChild(el(doc, 'span', 'cui-attachment-name', attachmentNameOf(item)));
+            const rm = el(doc, 'button', 'cui-attachment-rm', '✕') as HTMLButtonElement;
+            rm.type = 'button';
+            rm.setAttribute('aria-label', `Remove ${attachmentNameOf(item)}`);
+            rm.addEventListener('click', () => {
+                staged.splice(i, 1);
+                renderAttachmentStrip();
+            });
+            chip.appendChild(rm);
+            attachStrip.appendChild(chip);
+        });
+    };
+
+    const stageItems = (items: readonly SubmitAttachment[]): void => {
+        if (!attachmentsEnabled || items.length === 0) return;
+        staged.push(...items);
+        renderAttachmentStrip();
+    };
+
+    const clearStaged = (): void => {
+        staged = [];
+        renderAttachmentStrip();
+    };
+
+    fileInput.addEventListener('change', () => {
+        const files = fileInput.files ? Array.from(fileInput.files) : [];
+        fileInput.value = '';
+        stageItems(files);
+    });
+    input.addEventListener('paste', (ev) => {
+        if (!attachmentsEnabled) return;
+        const files = ev.clipboardData?.files;
+        if (files && files.length) {
+            ev.preventDefault();
+            stageItems(Array.from(files));
+        }
+    });
+
+    /* ---------------------------------------------------------------- */
+    /* Model picker                                                       */
+    /* ---------------------------------------------------------------- */
+
+    const setModels = (models: readonly ChatModelOption[], selected?: string): void => {
+        modelSelect.replaceChildren();
+        for (const m of models) {
+            const opt = doc.createElement('option');
+            opt.value = m.id;
+            opt.textContent = m.hint ? `${m.label ?? m.id} — ${m.hint}` : (m.label ?? m.id);
+            modelSelect.appendChild(opt);
+        }
+        if (selected !== undefined) modelSelect.value = selected;
+        modelSelect.hidden = !(features.modelPicker && models.length > 0);
+    };
+    modelSelect.addEventListener('change', () => transport.selectModel?.(modelSelect.value));
+
+    /* ---------------------------------------------------------------- */
+    /* Part renderers                                                     */
+    /* ---------------------------------------------------------------- */
+
+    const interactive = (): boolean => features.messageActions === true && !!transport.messageAction;
+    const reportAction = (message: ChatMessage, action: string, payload?: unknown): void =>
+        transport.messageAction?.(message.id, action, payload);
+
+    const renderUsage = (usage: UsageInfo): HTMLElement =>
+        el(doc, 'div', 'cui-usage', usageText(usage) || 'usage');
+
+    const renderSuggestions = (part: Extract<MessagePart, { type: 'suggestions' }>, message: ChatMessage): HTMLElement => {
+        const row = el(doc, 'div', 'cui-suggestions');
+        for (const prompt of part.prompts) {
+            const chip = el(doc, 'button', 'cui-suggestion', prompt) as HTMLButtonElement;
+            chip.type = 'button';
+            chip.addEventListener('click', () => {
+                if (interactive()) {
+                    reportAction(message, 'suggestion', { text: prompt });
+                } else {
+                    input.value = prompt;
+                    autosize();
+                    input.focus();
+                }
+            });
+            row.appendChild(chip);
+        }
+        return row;
+    };
+
+    const renderTaskPlan = (data: Partial<TaskPlanCardData> | undefined): HTMLElement => {
+        const card = el(doc, 'div', 'cui-card');
+        card.dataset.kind = 'task_plan';
+        if (data?.title) card.appendChild(el(doc, 'div', 'cui-card-title', data.title));
+        const list = el(doc, 'ol', 'cui-task-list');
+        for (const step of data?.steps ?? []) {
+            const item = el(doc, 'li', 'cui-task-step');
+            item.dataset.status = step.status ?? 'pending';
+            const glyphs = { pending: '○', active: '▸', done: '✓', error: '✕' } as const;
+            item.appendChild(el(doc, 'span', 'cui-task-icon', glyphs[item.dataset.status as keyof typeof glyphs] ?? '○'));
+            const labelWrap = el(doc, 'span', 'cui-task-label', step.label);
+            item.appendChild(labelWrap);
+            if (step.detail) item.appendChild(el(doc, 'span', 'cui-task-detail', step.detail));
+            list.appendChild(item);
+        }
+        card.appendChild(list);
+        return card;
+    };
+
+    const renderQuestion = (data: Partial<QuestionCardData> | undefined, message: ChatMessage): HTMLElement => {
+        const card = el(doc, 'div', 'cui-card');
+        card.dataset.kind = 'question';
+        card.appendChild(el(doc, 'div', 'cui-card-title', data?.question ?? ''));
+        const action = data?.action ?? 'question';
+        const answered = data?.answer !== undefined;
+        const canAnswer = interactive() && !answered;
+
+        const markAnswered = (answer: string): void => {
+            card.dataset.answered = 'true';
+            card.querySelectorAll('button, input, select').forEach((c) => ((c as HTMLButtonElement).disabled = true));
+            card.appendChild(el(doc, 'div', 'cui-card-answer', answer));
+            reportAction(message, action, { answer });
+        };
+
+        if (answered) {
+            card.dataset.answered = 'true';
+            card.appendChild(el(doc, 'div', 'cui-card-answer', data!.answer));
+        }
+        if (data?.options?.length && !answered) {
+            const opts = el(doc, 'div', 'cui-card-options');
+            for (const opt of data.options) {
+                const chip = el(doc, 'button', 'cui-suggestion', opt) as HTMLButtonElement;
+                chip.type = 'button';
+                chip.disabled = !canAnswer;
+                chip.addEventListener('click', () => markAnswered(opt));
+                opts.appendChild(chip);
+            }
+            card.appendChild(opts);
+        }
+        const showFreeText = !answered && (data?.allowFreeText ?? !data?.options?.length);
+        if (showFreeText) {
+            const row = el(doc, 'div', 'cui-card-answer-row');
+            const field = doc.createElement('input');
+            field.type = 'text';
+            field.className = 'cui-card-input';
+            field.placeholder = data?.placeholder ?? 'Type an answer…';
+            field.disabled = !canAnswer;
+            const btn = el(doc, 'button', '', data?.submitLabel ?? 'Send') as HTMLButtonElement;
+            btn.type = 'button';
+            btn.disabled = !canAnswer;
+            const submitAnswer = (): void => {
+                const answer = field.value.trim();
+                if (answer) markAnswered(answer);
+            };
+            btn.addEventListener('click', submitAnswer);
+            field.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Enter' && !ev.isComposing) submitAnswer();
+            });
+            row.append(field, btn);
+            card.appendChild(row);
+        }
+        return card;
+    };
+
+    const renderApproval = (data: Partial<ApprovalCardData> | undefined, message: ChatMessage): HTMLElement => {
+        const card = el(doc, 'div', 'cui-card');
+        card.dataset.kind = 'approval';
+        const action = data?.action ?? 'approval';
+        const state = data?.state ?? 'pending';
+        card.dataset.state = state;
+        if (data?.title) card.appendChild(el(doc, 'div', 'cui-card-title', data.title));
+        if (data?.description) card.appendChild(el(doc, 'div', 'cui-card-desc', data.description));
+        if (state === 'pending') {
+            const row = el(doc, 'div', 'cui-card-actions');
+            const canAct = interactive();
+            const decide = (decision: 'approved' | 'rejected'): void => {
+                card.dataset.state = decision;
+                row.replaceChildren(el(doc, 'span', 'cui-card-state', decision === 'approved' ? 'Approved' : 'Rejected'));
+                reportAction(message, action, { decision });
+            };
+            const yes = el(doc, 'button', 'cui-approve', data?.approveLabel ?? 'Approve') as HTMLButtonElement;
+            yes.type = 'button';
+            yes.disabled = !canAct;
+            yes.addEventListener('click', () => decide('approved'));
+            const no = el(doc, 'button', 'cui-reject', data?.rejectLabel ?? 'Reject') as HTMLButtonElement;
+            no.type = 'button';
+            no.disabled = !canAct;
+            no.addEventListener('click', () => decide('rejected'));
+            row.append(yes, no);
+            card.appendChild(row);
+        } else {
+            card.appendChild(el(doc, 'div', 'cui-card-state', state === 'approved' ? 'Approved' : 'Rejected'));
+        }
+        return card;
+    };
+
+    const normalizeModel = (m: string | ChatModelOption): ChatModelOption =>
+        typeof m === 'string' ? { id: m } : m;
+
+    const renderModelSelect = (data: Partial<ModelSelectCardData> | undefined, message: ChatMessage): HTMLElement => {
+        const card = el(doc, 'div', 'cui-card');
+        card.dataset.kind = 'model_select';
+        const action = data?.action ?? 'model_select';
+        const row = el(doc, 'div', 'cui-card-modelrow');
+        if (data?.label) row.appendChild(el(doc, 'span', 'cui-card-label', data.label));
+        const select = doc.createElement('select');
+        select.className = 'cui-model';
+        for (const raw of data?.options ?? []) {
+            const m = normalizeModel(raw);
+            const opt = doc.createElement('option');
+            opt.value = m.id;
+            opt.textContent = m.hint ? `${m.label ?? m.id} — ${m.hint}` : (m.label ?? m.id);
+            select.appendChild(opt);
+        }
+        if (data?.selected !== undefined) select.value = data.selected;
+        select.disabled = !interactive();
+        select.addEventListener('change', () => reportAction(message, action, { model: select.value }));
+        row.appendChild(select);
+        card.appendChild(row);
+        return card;
+    };
+
+    const renderCard = (part: Extract<MessagePart, { type: 'card' }>, message: ChatMessage): HTMLElement | null => {
+        const custom = customRenderers[`card:${part.kind}`];
+        if (custom) return custom(part, { message, ownerDocument: doc });
+        switch (part.kind) {
+            case 'task_plan':
+                return renderTaskPlan(part.data as Partial<TaskPlanCardData> | undefined);
+            case 'question':
+                return renderQuestion(part.data as Partial<QuestionCardData> | undefined, message);
+            case 'approval':
+                return renderApproval(part.data as Partial<ApprovalCardData> | undefined, message);
+            case 'model_select':
+                return renderModelSelect(part.data as Partial<ModelSelectCardData> | undefined, message);
+            default:
+                return customRenderers['card']?.(part, { message, ownerDocument: doc }) ?? null;
+        }
+    };
 
     const renderPart = (part: MessagePart, message: ChatMessage): HTMLElement | null => {
+        if (part.type === 'card') return renderCard(part, message);
         const custom = customRenderers[part.type];
         if (custom) return custom(part, { message, ownerDocument: doc });
 
@@ -101,7 +484,7 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
                 return el(doc, 'div', 'cui-part-text', part.text);
             case 'markdown': {
                 const node = el(doc, 'div', 'cui-part-markdown');
-                node.innerHTML = renderMarkdown(part.text);
+                node.innerHTML = mdRender(part.text);
                 return node;
             }
             case 'html': {
@@ -110,11 +493,65 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
                 return node;
             }
             case 'image': {
+                const src = safeEmbedUrl(part.src);
+                if (!src) return null;
+                const wrap = el(doc, 'div', 'cui-part-image');
                 const img = doc.createElement('img');
-                img.src = part.src;
-                img.alt = part.alt ?? '';
-                img.style.maxWidth = '100%';
-                return img;
+                img.src = src;
+                img.alt = part.alt ?? part.name ?? '';
+                img.loading = 'lazy';
+                wrap.appendChild(img);
+                return wrap;
+            }
+            case 'audio': {
+                const src = safeEmbedUrl(part.src);
+                if (!src) return null;
+                const wrap = el(doc, 'div', 'cui-part-media');
+                const audio = doc.createElement('audio');
+                audio.controls = true;
+                audio.preload = 'metadata';
+                audio.src = src;
+                wrap.appendChild(audio);
+                if (part.name) wrap.appendChild(el(doc, 'div', 'cui-media-name', part.name));
+                return wrap;
+            }
+            case 'video': {
+                const src = safeEmbedUrl(part.src);
+                if (!src) return null;
+                const wrap = el(doc, 'div', 'cui-part-media');
+                const video = doc.createElement('video');
+                video.controls = true;
+                video.preload = 'metadata';
+                video.src = src;
+                if (part.poster) {
+                    const poster = safeEmbedUrl(part.poster);
+                    if (poster) video.poster = poster;
+                }
+                wrap.appendChild(video);
+                if (part.name) wrap.appendChild(el(doc, 'div', 'cui-media-name', part.name));
+                return wrap;
+            }
+            case 'quote': {
+                const node = el(doc, 'blockquote', 'cui-part-quote');
+                node.appendChild(el(doc, 'div', 'cui-quote-body', part.text));
+                if (part.source) node.appendChild(el(doc, 'cite', 'cui-quote-source', part.source));
+                return node;
+            }
+            case 'suggestions':
+                return renderSuggestions(part, message);
+            case 'usage':
+                return renderUsage(part.usage);
+            case 'evidence': {
+                const node = el(doc, 'div', 'cui-evidence');
+                const level: EvidenceLevel = part.level ?? 'info';
+                node.dataset.level = level;
+                const icons: Record<EvidenceLevel, string> = { info: 'ℹ', warning: '⚠', error: '✕' };
+                node.appendChild(el(doc, 'span', 'cui-evidence-icon', icons[level]));
+                const body = el(doc, 'span', 'cui-evidence-body');
+                body.appendChild(el(doc, 'span', 'cui-evidence-text', part.text));
+                if (part.detail) body.appendChild(el(doc, 'span', 'cui-evidence-detail', part.detail));
+                node.appendChild(body);
+                return node;
             }
             case 'tool_call': {
                 const node = el(doc, 'div', 'cui-part-tool_call');
@@ -130,7 +567,6 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
             }
             case 'divider':
                 return el(doc, 'hr');
-            case 'card':
             default:
                 return null; // custom kinds require a registered renderer
         }
@@ -152,25 +588,39 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         return row.childElementCount ? row : null;
     };
 
+    const renderCostChip = (message: ChatMessage): HTMLElement | null => {
+        if (!features.costChip) return null;
+        const usage = message.meta?.['usage'] as UsageInfo | undefined;
+        if (!usage || typeof usage !== 'object') return null;
+        // no duplicate chip when the host already emitted a usage part
+        if (message.parts.some((p) => p.type === 'usage')) return null;
+        return renderUsage(usage);
+    };
+
     const addMessage: ChatViewHandle['addMessage'] = (message) => {
         const key = partKey(message);
         const existing = byKey.get(key);
         if (existing) existing.node.remove();
+        streams.delete(key);
 
         const node = el(doc, 'div', 'cui-msg');
         node.dataset.role = message.role;
         if (message.status) node.dataset.status = message.status;
         const body = el(doc, 'div', 'cui-bubble');
+        const partEls: (HTMLElement | null)[] = [];
         for (const part of message.parts) {
             const rendered = renderPart(part, message);
+            partEls.push(rendered);
             if (rendered) body.appendChild(rendered);
         }
+        const chip = renderCostChip(message);
+        if (chip) body.appendChild(chip);
         const actions = renderActions(message);
         if (actions) body.appendChild(actions);
         node.appendChild(body);
         messages.appendChild(node);
-        byKey.set(key, { message, node, body });
-        scrollToBottom();
+        byKey.set(key, { message, node, body, partEls });
+        applyScroll(message.role === 'user');
     };
 
     const renderQueue = (items: readonly QueuedMessage[]) => {
@@ -201,26 +651,56 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
 
     const submit = () => {
         const text = input.value.trim();
-        if (!text) return;
-        const files = fileInput.files && fileInput.files.length ? Array.from(fileInput.files) : undefined;
+        if (!text && staged.length === 0) return;
+        const submission: ChatSubmit = staged.length ? { text, attachments: [...staged] } : { text };
         input.value = '';
-        input.style.height = 'auto';
         fileInput.value = '';
-        void transport.send(files ? { text, attachments: files } : { text });
+        clearStaged();
+        autosize();
+        void transport.send(submission);
     };
 
-    send.addEventListener('click', submit);
+    send.addEventListener('click', () => {
+        submit();
+        applyScroll(true);
+    });
     cancel.addEventListener('click', () => transport.cancel?.());
     attach.addEventListener('click', () => fileInput.click());
     quoteDismiss.addEventListener('click', () => handle.clearQuote());
+
+    /* ---------------------------------------------------------------- */
+    /* IME composition — ported from Deep Chat's TextInput approach:      */
+    /* compositionstart/end guard so Enter confirms IME candidates        */
+    /* instead of submitting. `isComposing`/keyCode 229 cover engines     */
+    /* that fire keydown before compositionend (Safari).                  */
+    /* ---------------------------------------------------------------- */
+
+    let composing = false;
+    input.addEventListener('compositionstart', () => (composing = true));
+    input.addEventListener('compositionend', () => (composing = false));
     input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); submit(); }
-        else if (ev.key === 'Escape' && stagedQuote != null) { handle.clearQuote(); }
+        const inComposition = composing || ev.isComposing || ev.keyCode === 229;
+        if (ev.key === 'Enter' && !ev.shiftKey) {
+            if (!inComposition) {
+                ev.preventDefault();
+                submit();
+            }
+        } else if (ev.key === 'Escape' && !inComposition && stagedQuote != null) {
+            handle.clearQuote();
+        }
     });
-    input.addEventListener('input', () => {
-        input.style.height = 'auto';
-        input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
-    });
+    input.addEventListener('input', autosize);
+
+    const streamOpts = () =>
+        options.renderMarkdown ? { render: options.renderMarkdown } : undefined;
+
+    const lastStreamablePart = (parts: readonly MessagePart[]): number => {
+        for (let i = parts.length - 1; i >= 0; i--) {
+            const t = parts[i]?.type;
+            if (t === 'text' || t === 'markdown') return i;
+        }
+        return -1;
+    };
 
     const handle: ChatViewHandle = {
         addMessage,
@@ -232,27 +712,62 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         },
         appendDelta(domKey, delta) {
             const entry = byKey.get(domKey);
-            if (!entry) return;
-            const textEl = entry.body.querySelector('.cui-part-text');
-            if (textEl) {
-                textEl.textContent = (textEl.textContent ?? '') + delta;
-            } else {
-                entry.body.appendChild(el(doc, 'div', 'cui-part-text', delta));
-            }
+            if (!entry || !delta) return;
             const parts = [...entry.message.parts];
-            const idx = parts.findIndex(p => p.type === 'text');
-            const merged = idx >= 0
-                ? parts.map((p, i) => (i === idx && p.type === 'text' ? { ...p, text: p.text + delta } : p))
-                : [...parts, { type: 'text', text: delta } as MessagePart];
-            byKey.set(domKey, { ...entry, message: { ...entry.message, parts: merged } });
-            scrollToBottom();
+            const partEls = [...entry.partEls];
+            let idx = lastStreamablePart(parts);
+
+            if (idx === -1) {
+                const fmt = options.deltaFormat ?? 'text';
+                const part: MessagePart =
+                    fmt === 'markdown'
+                        ? { type: 'markdown', text: delta }
+                        : { type: 'text', text: delta };
+                parts.push(part);
+                const rendered = renderPart(part, entry.message);
+                partEls.push(rendered);
+                if (rendered) {
+                    entry.body.appendChild(rendered);
+                    if (part.type === 'markdown') {
+                        rendered.replaceChildren();
+                        const renderer = new MarkdownStreamRenderer(rendered, streamOpts());
+                        renderer.append(delta);
+                        streams.set(domKey, { renderer, el: rendered });
+                    }
+                }
+            } else {
+                const part = parts[idx]!;
+                const text = (part.type === 'text' || part.type === 'markdown' ? part.text : '') + delta;
+                parts[idx] = { ...part, text } as MessagePart;
+                const target = partEls[idx];
+                if (part.type === 'markdown' && target) {
+                    let st = streams.get(domKey);
+                    if (!st || st.el !== target) {
+                        target.replaceChildren();
+                        const renderer = new MarkdownStreamRenderer(target, streamOpts());
+                        renderer.append(text.slice(0, text.length - delta.length));
+                        st = { renderer, el: target };
+                        streams.set(domKey, st);
+                    }
+                    st.renderer.append(delta);
+                } else if (part.type === 'text' && target) {
+                    target.textContent = text;
+                }
+            }
+            byKey.set(domKey, { ...entry, message: { ...entry.message, parts }, partEls });
+            applyScroll();
         },
         removeMessage(domKey) {
             const entry = byKey.get(domKey);
-            if (entry) { entry.node.remove(); byKey.delete(domKey); }
+            if (entry) {
+                entry.node.remove();
+                byKey.delete(domKey);
+                streams.delete(domKey);
+            }
         },
         clearMessages() {
             byKey.clear();
+            streams.clear();
             messages.replaceChildren();
         },
         setQueue(items) {
@@ -285,10 +800,29 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
             quoteText.textContent = '';
             quote.classList.remove('visible');
         },
+        setModels(models, selected) {
+            if (!features.modelPicker) return;
+            setModels(models, selected);
+        },
+        getSelectedModel() {
+            return modelSelect.hidden ? null : modelSelect.value;
+        },
+        stageAttachments(items) {
+            stageItems(items);
+        },
+        getAttachments: () => [...staged],
+        clearAttachments() {
+            clearStaged();
+        },
+        scrollToBottom(force) {
+            applyScroll(force !== false);
+        },
         destroy() {
             if (destroyed) return;
             destroyed = true;
             byKey.clear();
+            streams.clear();
+            revokePreviews();
             root.remove();
         },
     };
