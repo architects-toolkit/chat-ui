@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>chat-ui — feature screenshots</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body { margin: 0; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; background: #eceef1; }
+    #frame { width: 760px; margin: 0 auto; padding: 20px; box-sizing: border-box; }
+    .shot-card { background: #fff; border: 1px solid #dcdfe4; border-radius: 14px; overflow: hidden; }
+    .shot-card + .shot-card { margin-top: 20px; }
+    /* In shot mode the surface grows with content instead of scrolling. */
+    .shot-card .chat-ui { height: auto; }
+    .shot-card .cui-messages { overflow: visible; }
+    body[data-theme='dark'] { background: #0f0f13; }
+    body[data-theme='dark'] .shot-card { background: #16161a; border-color: #2c2c32; }
+  </style>
+</head>
+<body>
+  <div id="frame"></div>
+  <script type="module">
+    /*
+     * Static capture page for docs/screenshots: deterministic — no timers,
+     * no streaming animation, fixed ids. `?shot=<name>` renders one feature
+     * state; `?shot=all` renders the full chat; `&theme=dark` selects the
+     * dark palette. After populating, the page writes the content height to
+     * <html data-content-height> so the capture harness can size the window.
+     */
+    import { createChatView } from '../dist/chat-ui.js';
+
+    const params = new URLSearchParams(location.search);
+    const SHOT = params.get('shot') ?? 'all';
+    const THEME = params.get('theme') ?? 'light';
+    document.body.dataset.theme = THEME;
+
+    /* A deterministic PNG generated on a canvas (same output every run). */
+    function demoPng(width, height, from, to, label) {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const g = canvas.getContext('2d');
+      const grad = g.createLinearGradient(0, 0, width, height);
+      grad.addColorStop(0, from);
+      grad.addColorStop(1, to);
+      g.fillStyle = grad;
+      g.fillRect(0, 0, width, height);
+      g.fillStyle = 'rgba(255,255,255,0.92)';
+      g.font = `600 ${Math.round(height / 7)}px system-ui, sans-serif`;
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(label, width / 2, height / 2);
+      g.strokeStyle = 'rgba(255,255,255,0.35)';
+      for (let x = 0; x < width; x += width / 8) {
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x + width / 4, height); g.stroke();
+      }
+      return canvas.toDataURL('image/png');
+    }
+    const CHART = demoPng(560, 220, '#4f7cff', '#8e5cd6', 'image part');
+    const THUMB = demoPng(64, 64, '#2f9e57', '#4f7cff', 'img');
+
+    const transport = {
+      send() {}, cancel() {},
+      editQueued() {}, sendQueuedNow() {}, removeQueued() {},
+      selectModel() {}, messageAction() {}, requestAttachments() {},
+    };
+    const features = {
+      queue: true, contextCard: true, quoteChip: true,
+      attachments: true, attachmentAccept: 'image/*',
+      modelPicker: true, costChip: true, messageActions: true,
+      inputModes: ['text', 'attachments'],
+    };
+
+    const frame = document.getElementById('frame');
+
+    const userMsg = (id, text) => ({ id, role: 'user', status: 'done', parts: [{ type: 'text', text }] });
+
+    const MD_SAMPLE = [
+      '## Release checklist',
+      '',
+      'Streaming **markdown** renders safely — even `inline code`, *italics* and ~~strikes~~.',
+      '',
+      '```ts',
+      'const view = createChatView(el, { transport });',
+      'view.addInteraction(interaction);',
+      '```',
+      '',
+      '| Step | Owner | Status |',
+      '| --- | --- | --- |',
+      '| tag release | releng | done |',
+      '| smoke test | qa | running |',
+      '',
+      '- [x] merge the branch',
+      '- [ ] publish the notes',
+      '',
+      '> Links and media URLs are sanitized — [docs](https://example.com/docs).',
+    ].join('\n');
+
+    /* ------------------------------ scenarios ------------------------------ */
+
+    const populate = {
+      markdown(view) {
+        view.addMessage(userMsg('u1', 'Show me the release checklist.'));
+        view.addMessage({ id: 'a1', role: 'assistant', status: 'done', parts: [{ type: 'markdown', text: MD_SAMPLE }] });
+      },
+
+      tools(view) {
+        view.addMessage({
+          id: 't1', role: 'tool', status: 'done',
+          parts: [
+            { type: 'tool_call', name: 'web_search', args: '{"q":"release checklist"}', status: 'done' },
+            { type: 'tool_result', name: 'web_search', content: '12 results in 340ms' },
+          ],
+        });
+        view.addMessage({
+          id: 't2', role: 'tool', status: 'done',
+          parts: [
+            { type: 'tool_call', name: 'fs_write', args: '{"path":"/tmp/notes.md"}', status: 'error' },
+            { type: 'tool_result', name: 'fs_write', content: 'EACCES: permission denied', isError: true },
+          ],
+        });
+        view.addMessage({
+          id: 't3', role: 'tool', status: 'streaming',
+          parts: [{ type: 'tool_call', name: 'code_exec', status: 'running', args: '{"cmd":"pnpm test"}' }],
+        });
+      },
+
+      cards(view) {
+        view.addMessage({
+          id: 'c1', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'card', kind: 'task_plan', data: {
+              title: 'Onboarding plan',
+              steps: [
+                { label: 'Read the design doc', status: 'done' },
+                { label: 'Mount the view', status: 'done', detail: '12ms' },
+                { label: 'Wire the transport', status: 'active' },
+                { label: 'Ship screenshots', status: 'pending' },
+              ],
+            } },
+            { type: 'card', kind: 'question', data: {
+              question: 'Which environment should I deploy to?',
+              options: ['dev', 'staging', 'prod'], allowFreeText: true, placeholder: 'Or type one…',
+            } },
+            { type: 'card', kind: 'question', data: {
+              question: 'Already answered card', options: ['yes', 'no'], answer: 'yes',
+            } },
+            { type: 'card', kind: 'approval', data: {
+              title: 'Allow file write?', description: 'The agent wants to update CHANGELOG.md.',
+            } },
+            { type: 'card', kind: 'approval', data: {
+              title: 'Allow network fetch?', state: 'approved',
+            } },
+            { type: 'card', kind: 'model_select', data: {
+              label: 'Reasoning effort',
+              options: [{ id: 'low' }, { id: 'medium' }, { id: 'high', hint: 'slower' }],
+              selected: 'medium',
+            } },
+          ],
+        });
+      },
+
+      quote(view) {
+        view.addMessage({
+          id: 'q1', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'quote', text: 'The view performs zero I/O — the host drives everything through an injected transport.', source: 'DESIGN.md' },
+            { type: 'text', text: 'Quote parts render as blockquotes; the chip below the list is a staged composer quote.' },
+          ],
+        });
+        view.stageQuote('Replying to: "The view performs zero I/O…"');
+      },
+
+      suggestions(view) {
+        view.addMessage({
+          id: 's1', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'text', text: 'Done — want me to keep going? Try one of these:' },
+            { type: 'suggestions', prompts: ['Summarize the diff', 'Draft the release notes', 'Explain the failure', 'Run the tests'] },
+          ],
+        });
+      },
+
+      usage(view) {
+        view.addMessage({
+          id: 'u2', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'text', text: 'A usage part renders as a compact chip:' },
+            { type: 'usage', usage: { label: 'draft', tokensIn: 1824, tokensOut: 312, cost: 0.0042, durationMs: 2100 } },
+          ],
+        });
+        view.addMessage({
+          id: 'u3', role: 'assistant', status: 'done',
+          parts: [{ type: 'text', text: '…and meta.usage feeds the same chip when costChip is on.' }],
+          meta: { usage: { tokensIn: 950, tokensOut: 120, cost: 0.0018 } },
+        });
+      },
+
+      evidence(view) {
+        view.addMessage({
+          id: 'e1', role: 'background', status: 'done',
+          parts: [
+            { type: 'evidence', text: 'background agent picked up the task', level: 'info' },
+            { type: 'evidence', text: 'cache entry is stale', detail: 'TTL expired 2m ago — refetching', level: 'warning' },
+            { type: 'evidence', text: 'third retry failed', detail: 'upstream returned 502', level: 'error' },
+          ],
+        });
+      },
+
+      attachments(view) {
+        view.stageAttachments([
+          { kind: 'image', name: 'diagram.png', url: THUMB, mimeType: 'image/png' },
+          { kind: 'audio', name: 'voice-note.ogg', mimeType: 'audio/ogg', meta: { durationMs: 4200 } },
+          { kind: 'file', name: 'spec.pdf', size: 241_172 },
+        ]);
+        const input = document.querySelector('.cui-input');
+        if (input) input.value = 'send these files';
+        view.addMessage(userMsg('u4', 'earlier message stays in view'));
+      },
+
+      chrome(view) {
+        view.setStatus('Ready — queue, context card and model picker enabled');
+        view.setContextUsage({ percent: 62, elapsedMs: 81_000 });
+        view.setModels([
+          { id: 'fast' }, { id: 'pro', label: 'Pro', hint: '2× cost' }, { id: 'max', label: 'Max', hint: '4× cost' },
+        ], 'pro');
+        view.setQueue([
+          { id: 'q1', text: 'Queued: compare against last release' },
+          { id: 'q2', text: 'Queued: summarize open issues' },
+        ]);
+        view.addMessage(userMsg('u5', 'What is left in the queue?'));
+        view.addMessage({ id: 'a5', role: 'assistant', status: 'streaming', parts: [{ type: 'markdown', text: 'Two items are waiting. I will answer the first once this turn finishes…' }] });
+      },
+
+      references(view, card) {
+        view.addMessage({
+          id: 'r1', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'markdown', text: 'The parser landed in `v0.2.0` and ships in the current release — sources below.' },
+            { type: 'references', items: [
+              { id: 1, title: 'Release notes — v0.2.0', url: 'https://example.com/releases/v0.2.0',
+                snippet: 'The canonical parser replaces the legacy block splitter and is enabled by default.',
+                source: 'web_search', verified: true, publishedAt: '2025-01-15' },
+              { id: 2, title: 'Design doc — canonical interactions', url: 'https://example.com/design/interactions',
+                snippet: 'One serialized shape for every host; parts ride the same wire.',
+                source: 'team docs', publishedAt: '2024-11-02' },
+              { id: 'cfg', title: 'Migration guide (unlinked source)', source: 'repo:docs/migrations',
+                snippet: 'No URL attached — rendered as plain text.' },
+              { title: 'Community thread', url: 'https://forum.example.com/t/42',
+                source: 'web_search' },
+            ] },
+          ],
+        });
+        // Show the citations expanded for the capture (default state is collapsed).
+        const details = card.querySelector('details.cui-references');
+        if (details) details.open = true;
+      },
+
+      subagent(view) {
+        view.addMessage({
+          id: 'sa1', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'text', text: 'Two background agents are on it:' },
+            { type: 'card', kind: 'subagent_run', data: {
+              id: 'run-1', name: 'Research agent', status: 'running',
+              task: 'Scan the repo for card-renderer usages',
+              detail: 'step 3 of 7 — scanning src/',
+              elapsedMs: 12_400,
+              progress: { done: 3, total: 7 },
+              usage: { tokensIn: 2400, tokensOut: 640, cost: 0.0061, durationMs: 12_400 },
+              output: 'src/chat-view.ts: renderCard dispatches card:<kind>\nsrc/types.ts: CardPart union\n…',
+              cancellable: true,
+            } },
+            { type: 'card', kind: 'subagent_run', data: {
+              id: 'run-0', name: 'Docs agent', status: 'done',
+              task: 'Summarize the design doc',
+              startedAt: '2025-01-01T10:00:00Z', finishedAt: '2025-01-01T10:01:15Z',
+              usage: { tokensIn: 1824, tokensOut: 312, cost: 0.0042 },
+              output: 'Summary: the view performs zero I/O — hosts drive everything through an injected transport.',
+            } },
+            { type: 'card', kind: 'subagent_run', data: {
+              id: 'run-2', name: 'Release agent', status: 'failed',
+              task: 'Publish the notes', detail: 'upstream returned 502',
+              elapsedMs: 3_100,
+            } },
+          ],
+        });
+      },
+
+      image(view) {
+        view.addMessage({
+          id: 'i1', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'text', text: 'Here is the chart you asked for:' },
+            { type: 'image', src: CHART, alt: 'Demo chart', name: 'chart.png' },
+            { type: 'evidence', text: 'generated locally — no network fetch', level: 'info' },
+          ],
+        });
+      },
+
+      all(view, card) {
+        view.setStatus('Ready — every feature enabled');
+        view.setContextUsage({ percent: 62, elapsedMs: 81_000 });
+        view.setModels([
+          { id: 'fast' }, { id: 'pro', label: 'Pro', hint: '2× cost' }, { id: 'max', label: 'Max', hint: '4× cost' },
+        ], 'pro');
+
+        view.addMessage(userMsg('u1', 'Summarize the v2 parser rollout, then queue the follow-ups.'));
+        view.addMessage({
+          id: 'a1', role: 'assistant', status: 'done',
+          parts: [{ type: 'markdown', text: MD_SAMPLE }],
+        });
+        view.addMessage({
+          id: 't1', role: 'tool', status: 'done',
+          parts: [
+            { type: 'tool_call', name: 'web_search', args: '{"q":"v2 parser rollout"}', status: 'done' },
+            { type: 'tool_result', name: 'web_search', content: '12 results in 340ms' },
+            { type: 'tool_call', name: 'fs_write', args: '{"path":"/tmp/notes.md"}', status: 'error' },
+            { type: 'tool_result', name: 'fs_write', content: 'EACCES: permission denied', isError: true },
+          ],
+        });
+        view.addMessage({
+          id: 'b1', role: 'background', status: 'done',
+          parts: [
+            { type: 'evidence', text: 'background agent refreshed the index', level: 'info' },
+            { type: 'evidence', text: 'cache entry is stale', detail: 'TTL expired 2m ago', level: 'warning' },
+          ],
+        });
+        view.addMessage({
+          id: 'a2', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'card', kind: 'task_plan', data: {
+              title: 'Rollout follow-ups',
+              steps: [
+                { label: 'Verify the migration path', status: 'done' },
+                { label: 'Update the docs site', status: 'active' },
+                { label: 'Announce in the changelog', status: 'pending' },
+              ],
+            } },
+            { type: 'card', kind: 'approval', data: {
+              title: 'Publish the changelog?', description: 'Writes to the public docs site.',
+            } },
+          ],
+        });
+        view.addMessage({
+          id: 'a3', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'card', kind: 'question', data: {
+              question: 'Which channel should I post to?', options: ['#releases', '#dev', '#general'],
+            } },
+            { type: 'card', kind: 'model_select', data: {
+              label: 'Model for the next turn', options: ['fast', 'pro', 'max'], selected: 'pro',
+            } },
+          ],
+        });
+        view.addMessage({
+          id: 'a4', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'quote', text: 'The view performs zero I/O — the host drives everything.', source: 'DESIGN.md' },
+            { type: 'text', text: 'The rollout chart:' },
+            { type: 'image', src: CHART, alt: 'Rollout chart', name: 'rollout.png' },
+          ],
+          meta: { usage: { tokensIn: 2400, tokensOut: 640, cost: 0.0061 } },
+        });
+        view.addMessage({
+          id: 'a5', role: 'assistant', status: 'done',
+          parts: [
+            { type: 'markdown', text: 'Everything above is traceable — sources attached.' },
+            { type: 'references', items: [
+              { id: 1, title: 'Release notes — v0.2.0', url: 'https://example.com/releases/v0.2.0',
+                snippet: 'The canonical parser replaces the legacy block splitter.',
+                source: 'web_search', verified: true, publishedAt: '2025-01-15' },
+              { id: 2, title: 'Design doc — canonical interactions', url: 'https://example.com/design/interactions',
+                source: 'team docs', publishedAt: '2024-11-02' },
+              { id: 'cfg', title: 'Migration guide (unlinked source)', source: 'repo:docs' },
+            ] },
+            { type: 'usage', usage: { label: 'total', tokensIn: 5200, tokensOut: 1480, cost: 0.0124, durationMs: 9300 } },
+            { type: 'suggestions', prompts: ['Draft the announcement', 'Show open risks', 'Compare with v0.1'] },
+          ],
+          meta: { actions: [
+            { id: 'regenerate', label: 'Regenerate' },
+            { id: 'copy', label: 'Copy answer' },
+          ] },
+        });
+
+        view.setQueue([
+          { id: 'q1', text: 'Queued: compare against last release' },
+          { id: 'q2', text: 'Queued: summarize open issues' },
+        ]);
+        view.stageQuote('Replying to: "The view performs zero I/O…"');
+        view.stageAttachments([
+          { kind: 'image', name: 'diagram.png', url: THUMB, mimeType: 'image/png' },
+          { kind: 'file', name: 'spec.pdf', size: 241_172 },
+        ]);
+      },
+    };
+
+    const run = populate[SHOT] ?? populate.all;
+    const card = (() => {
+      const el = document.createElement('div');
+      el.className = 'shot-card';
+      frame.appendChild(el);
+      return el;
+    })();
+    const view = createChatView(card, { transport, features, placeholder: 'Message…', deltaFormat: 'markdown' });
+    if (THEME === 'dark') card.querySelector('.chat-ui').setAttribute('data-theme', 'dark');
+    run(view, card);
+
+    document.title = `chat-ui — ${SHOT}`;
+    // Publish the content height for capture harnesses that can read the DOM.
+    document.documentElement.dataset.contentHeight = String(Math.ceil(document.documentElement.scrollHeight));
+  </script>
+</body>
+</html>

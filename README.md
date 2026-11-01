@@ -13,6 +13,28 @@ Chat UIs keep being rebuilt per product and per framework. This package separate
 - **The features** — capability map: each optional UI region (queue, context card, quote chip, attachments, model picker, cost chip, interactive parts) is enabled per host.
 - **The renderers** — renderer slots for message parts and card kinds, so hosts project their own domain without forking the view.
 
+## Screenshots
+
+Every shot below is captured from [`examples/screenshots.html`](examples/screenshots.html) — a static, deterministic page that mounts the real view (`?shot=<name>` renders one feature, `?shot=all` the full chat, `&theme=dark` the dark palette).
+
+| Light | Dark |
+| --- | --- |
+| ![The full chat — light theme](docs/screenshots/hero.png) | ![The full chat — dark theme](docs/screenshots/hero-dark.png) |
+
+| Feature | Screenshot |
+| --- | --- |
+| **Streaming markdown** — headings, fences, tables, task lists, sanitized links | ![markdown rendering](docs/screenshots/markdown.png) |
+| **Tool calls** — invocations, results, error states | ![tool_call / tool_result parts](docs/screenshots/tool-call.png) |
+| **Cards** — task_plan, question, approval, model_select | ![built-in card kinds](docs/screenshots/cards.png) |
+| **Quotes** — quote part plus the staged composer quote chip | ![quote part and quote chip](docs/screenshots/quote.png) |
+| **Suggestions** — clickable prompt chips | ![suggestion chips](docs/screenshots/suggestions.png) |
+| **Usage** — per-turn usage part and `meta.usage` cost chip | ![usage and cost chips](docs/screenshots/usage-cost.png) |
+| **Evidence** — muted info/warning/error lines for background turns | ![evidence lines](docs/screenshots/evidence.png) |
+| **Attachments** — staged strip with image thumbnails | ![attachment strip](docs/screenshots/attachments.png) |
+| **Chrome** — queue panel, context card, composer model picker | ![queue, context card, model picker](docs/screenshots/queue-context.png) |
+| **References** — collapsed "Sources" footer: sanitized links, verified badge, dates | ![references part](docs/screenshots/references.png) |
+| **Images** — URL-sanitized image parts | ![image part](docs/screenshots/image.png) |
+
 ## Install
 
 ```bash
