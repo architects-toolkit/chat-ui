@@ -144,6 +144,30 @@ export interface ModelSelectCardData {
     readonly action?: string;
 }
 
+/**
+ * One cited source inside a `references` part — where an answer's data
+ * came from (a web hit, a document, a tool output). Rendered as a
+ * numbered `[id]` entry in a collapsed "Sources" footer; `url` is
+ * emitted as a link only when it passes the shared URL sanitizer —
+ * unsafe schemes degrade to unlinked text.
+ */
+export interface ReferenceItem {
+    /** Display key rendered as `[id]`; defaults to the 1-based position. */
+    readonly id?: string | number;
+    /** Human-readable source title (the linked/unlinked label). */
+    readonly title?: string;
+    /** Link target — `javascript:`/`vbscript:`/`file:`/`data:` render unlinked. */
+    readonly url?: string;
+    /** Short excerpt, line-clamped by the stylesheet. */
+    readonly snippet?: string;
+    /** Origin label, e.g. the tool that produced it (`'web_search'`). */
+    readonly source?: string;
+    /** Renders a "verified" badge when true. */
+    readonly verified?: boolean;
+    /** ISO date string, shown muted. */
+    readonly publishedAt?: string;
+}
+
 /** Union of the built-in card payloads. */
 export type CardData =
     | TaskPlanCardData
@@ -181,6 +205,7 @@ export type MessagePart =
     | { readonly type: 'evidence'; readonly text: string; readonly detail?: string; readonly level?: EvidenceLevel }
     | { readonly type: 'tool_call'; readonly name: string; readonly args?: string; readonly status?: 'pending' | 'running' | 'done' | 'error' }
     | { readonly type: 'tool_result'; readonly name?: string; readonly content: string; readonly isError?: boolean }
+    | { readonly type: 'references'; readonly items: readonly ReferenceItem[] }
     | CardPart
     | { readonly type: 'divider' };
 

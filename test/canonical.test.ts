@@ -39,6 +39,7 @@ const EVERY_PART: readonly CanonicalPart[] = [
     { type: 'suggestions', prompts: ['a', 'b'] },
     { type: 'usage', usage: { tokensIn: 10, tokensOut: 5, cost: 0.001 } },
     { type: 'evidence', text: 'note', level: 'warning' },
+    { type: 'references', items: [{ id: 1, title: 'Src', url: 'https://x/ref', verified: true }] },
     { type: 'card', kind: 'task_plan', data: { steps: [{ label: 's' }] } },
 ];
 
@@ -277,6 +278,9 @@ describe('canonical part round-trip render', () => {
         expect(sel('.cui-suggestions')!.children.length).toBe(2);
         expect(sel('.cui-usage')!.textContent).toContain('10 in');
         expect(sel('.cui-evidence')!.getAttribute('data-level')).toBe('warning');
+        expect(sel('details.cui-references')).toBeTruthy();
+        expect(sel('.cui-references a.cui-ref-title')).toBeTruthy();
+        expect(sel('.cui-ref-verified')).toBeTruthy();
         expect(sel('.cui-card[data-kind="task_plan"]')).toBeTruthy();
     });
 });
