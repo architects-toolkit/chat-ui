@@ -50,7 +50,7 @@ Text/markdown parts are escaped before rendering; `html` parts are documented as
 
 ## 10. Contract stability
 
-`ChatViewHandle` is the stable imperative surface hosts program against (add/update/delta/remove messages, queue, status, processing, quote, models, attachments, scroll). Its methods are the compatibility contract — internal DOM layout and class names may evolve within majors, handle semantics may not. Breaking changes bump MAJOR under semver.
+`ChatViewHandle` is the stable imperative surface hosts program against (add/update/delta/remove messages, queue, status, processing, composer — text, focus, enabled, placeholder —, quote, models, attachments, scroll). Its methods are the compatibility contract — internal DOM layout and class names may evolve within majors, handle semantics may not. Breaking changes bump MAJOR under semver.
 
 ## 11. The canonical interaction contract (v2)
 

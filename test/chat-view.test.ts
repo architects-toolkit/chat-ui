@@ -137,3 +137,113 @@ describe('createChatView', () => {
         expect(host.querySelector('script')).toBeNull();
     });
 });
+
+describe('composer handle API', () => {
+    const composerEls = (host: HTMLElement) => ({
+        input: host.querySelector<HTMLTextAreaElement>('textarea.cui-input')!,
+        send: host.querySelector<HTMLButtonElement>('.cui-send')!,
+        attach: host.querySelector<HTMLButtonElement>('.cui-attach')!,
+    });
+
+    it('setComposerText sets the value, autosizes, and focuses to the end', () => {
+        const { host, view } = mount();
+        const { input } = composerEls(host);
+        view.setComposerText('prefilled draft', { focus: true });
+        expect(input.value).toBe('prefilled draft');
+        // autosize ran — an explicit inline height is written
+        expect(input.style.height).not.toBe('');
+        expect(document.activeElement).toBe(input);
+        expect(input.selectionStart).toBe('prefilled draft'.length);
+    });
+
+    it('setComposerText without focus leaves focus alone', () => {
+        const { host, view } = mount();
+        const { input } = composerEls(host);
+        view.setComposerText('quiet prefill');
+        expect(input.value).toBe('quiet prefill');
+        expect(document.activeElement).not.toBe(input);
+    });
+
+    it('getComposerText round-trips what setComposerText wrote', () => {
+        const { host, view } = mount();
+        const { input } = composerEls(host);
+        view.setComposerText('round trip');
+        expect(view.getComposerText()).toBe('round trip');
+        input.value = 'typed by the user';
+        expect(view.getComposerText()).toBe('typed by the user');
+    });
+
+    it('focusComposer focuses the input', () => {
+        const { host, view } = mount();
+        const { input } = composerEls(host);
+        expect(document.activeElement).not.toBe(input);
+        view.focusComposer();
+        expect(document.activeElement).toBe(input);
+    });
+
+    it('setComposerEnabled disables and re-enables textarea, send and attach', () => {
+        const { host, view } = mount({}, { attachments: true });
+        const { input, send, attach } = composerEls(host);
+        expect(input.disabled).toBe(false);
+        view.setComposerEnabled(false);
+        expect(input.disabled).toBe(true);
+        expect(send.disabled).toBe(true);
+        expect(attach.disabled).toBe(true);
+        view.setComposerEnabled(true);
+        expect(input.disabled).toBe(false);
+        expect(send.disabled).toBe(false);
+        expect(attach.disabled).toBe(false);
+    });
+
+    it('composes enabled × processing flags in any call order', () => {
+        const { host, view } = mount();
+        const { input } = composerEls(host);
+        // enabled=false + processing=false → still disabled
+        view.setComposerEnabled(false);
+        view.setProcessing(false);
+        expect(input.disabled).toBe(true);
+        // processing=true → still disabled
+        view.setProcessing(true);
+        expect(input.disabled).toBe(true);
+        // enabled=true while processing → still disabled
+        view.setComposerEnabled(true);
+        expect(input.disabled).toBe(true);
+        // enabled=true + processing=false → enabled
+        view.setProcessing(false);
+        expect(input.disabled).toBe(false);
+    });
+
+    it('a disabled composer does not submit', () => {
+        const send = vi.fn();
+        const { host, view } = mount({ send });
+        view.setComposerEnabled(false);
+        view.setComposerText('should not go out');
+        host.querySelector<HTMLButtonElement>('.cui-send')!.click();
+        expect(send).not.toHaveBeenCalled();
+    });
+
+    it('setPlaceholder updates the textarea placeholder', () => {
+        const { host, view } = mount();
+        const { input } = composerEls(host);
+        view.setPlaceholder('Ask the agent…');
+        expect(input.placeholder).toBe('Ask the agent…');
+    });
+
+    it('no-ops every composer method after destroy()', () => {
+        const { host, view } = mount();
+        const { input, send } = composerEls(host);
+        view.setComposerText('before');
+        view.destroy();
+        expect(() => {
+            view.setComposerText('after', { focus: true });
+            view.focusComposer();
+            view.setComposerEnabled(false);
+            view.setPlaceholder('gone');
+        }).not.toThrow();
+        expect(view.getComposerText()).toBe('');
+        expect(input.value).toBe('before');
+        expect(input.placeholder).toBe('Type a message…');
+        expect(input.disabled).toBe(false);
+        expect(send.disabled).toBe(false);
+    });
+});
