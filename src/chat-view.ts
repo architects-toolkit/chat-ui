@@ -103,13 +103,24 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         features.attachments === true &&
         (!features.inputModes || features.inputModes.includes('attachments'));
 
-    if (!options.unstyled) {
+    /*
+     * Stylesheet tiers: DEFAULT_STYLES first (skipped under `unstyled`),
+     * then the host-supplied `extraCss` — injected either way since it is
+     * host CSS, under `unstyled` there is simply no default sheet before
+     * it. Both sheets carry `data-cui-styles` so hosts and tests can
+     * query them.
+     */
+    const injectSheet = (css: string, slot: 'default' | 'extra'): void => {
         const style = doc.createElement('style');
-        style.textContent = DEFAULT_STYLES;
+        style.setAttribute('data-cui-styles', slot);
+        style.textContent = css;
         doc.head.appendChild(style);
-    }
+    };
+    if (!options.unstyled) injectSheet(DEFAULT_STYLES, 'default');
+    if (options.extraCss) injectSheet(options.extraCss, 'extra');
 
     const root = el(doc, 'div', NS);
+    if (options.theme) root.dataset.theme = options.theme;
     root.dataset.processing = 'false';
 
     const statusBar = el(doc, 'div', 'cui-status');

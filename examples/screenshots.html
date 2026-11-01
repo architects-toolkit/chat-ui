@@ -401,8 +401,10 @@
       frame.appendChild(el);
       return el;
     })();
-    const view = createChatView(card, { transport, features, placeholder: 'Message…', deltaFormat: 'markdown' });
-    if (THEME === 'dark') card.querySelector('.chat-ui').setAttribute('data-theme', 'dark');
+    const view = createChatView(card, {
+      transport, features, placeholder: 'Message…', deltaFormat: 'markdown',
+      ...(THEME === 'dark' ? { theme: 'dark' } : {}),
+    });
     run(view, card);
 
     document.title = `chat-ui — ${SHOT}`;

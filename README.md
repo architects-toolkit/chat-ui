@@ -276,7 +276,74 @@ createChatView(el, {
 
 ## Theming
 
-Every visual token is a CSS custom property under `--cui-*` (`--cui-bg`, `--cui-accent`, `--cui-radius`, …). Set them on the `.chat-ui` element or a parent; add `data-theme="dark"` for the built-in dark palette. Pass `unstyled: true` to disable the injected stylesheet entirely.
+Three tiers, in order of increasing host ownership:
+
+1. **Tokens** — every visual in `DEFAULT_STYLES` reads a `--cui-*` custom property. Set them on the `.chat-ui` element or any ancestor (own CSS, inline styles, or `extraCss`); `options.theme` stamps `data-theme` on the root — `'dark'` selects the built-in dark palette, any other name is host-defined and consumed through `[data-theme='brand']` selectors.
+2. **`options.extraCss`** — a second `<style>` element injected right after `DEFAULT_STYLES`, so token overrides, theme variants and small rules ship with the mount config.
+3. **`options.unstyled`** — suppresses `DEFAULT_STYLES` entirely; the host owns every rule. `extraCss` is still injected — it is host-supplied CSS either way.
+
+All injected sheets carry a `data-cui-styles` attribute (`'default'` | `'extra'`) so tests and tooling can query them.
+
+### Token reference
+
+| Token | Default | Drives |
+| --- | --- | --- |
+| `--cui-bg` | `#ffffff` | view background, inputs, pickers, jump button |
+| `--cui-fg` | `#1c1c1e` | primary text |
+| `--cui-muted` | `#6e6e73` | secondary text, status line, meta labels |
+| `--cui-border` | `#e3e3e6` | border/divider color |
+| `--cui-accent` | `#4f7cff` | primary actions, links, accents, progress meters |
+| `--cui-accent-fg` | `#ffffff` | text/icons on accent surfaces |
+| `--cui-accent-subtle` | `transparent` | subtle accent tint on hover states and chips (suggestion/actions hover, usage + source chips, running badge) |
+| `--cui-user-bg` | `#eef2ff` | user bubble |
+| `--cui-assistant-bg` | `#f6f6f7` | assistant bubble + staged quote chip |
+| `--cui-system-bg` | `transparent` | system message background |
+| `--cui-error` | `#d34545` | error states, cancel, rejection borders |
+| `--cui-ok` | `rgb(47,158,87)` | success tones — approved cards, done steps, verified badge, `ok` run badge |
+| `--cui-warn` | `rgb(160,122,31)` | warning tones — evidence warnings, `waiting` run badge |
+| `--cui-radius` | `10px` | corner radius; inner elements derive via `calc()` |
+| `--cui-border-width` | `1px` | border/outline stroke; accent bars derive via `calc()` |
+| `--cui-shadow` | `0 1px 4px rgba(0,0,0,0.18)` | jump-to-latest elevation |
+| `--cui-shadow-sm` | `none` | card/chip elevation (cards, suggestions, attachments) |
+| `--cui-bubble-maxw` | `85%` | message bubble max width |
+| `--cui-gap` | `10px` | gap between messages |
+| `--cui-pad` | `8px 12px` | message bubble padding |
+| `--cui-font` | `inherit` | font shorthand for the whole view |
+| `--cui-font-size` | `inherit` | base font size — overrides the shorthand's size part |
+| `--cui-font-size-sm` | `12px` | small text; the 10–13px scale derives via `calc()` on this |
+| `--cui-font-mono` | `ui-monospace, monospace` | code font |
+| `--cui-line-height` | `inherit` | base line height — overrides the shorthand's line-height part |
+
+`data-theme='dark'` overrides `--cui-bg`, `--cui-fg`, `--cui-muted`, `--cui-border`, `--cui-user-bg` and `--cui-assistant-bg`. Because `--cui-font-size`/`--cui-line-height` take precedence over the `--cui-font` shorthand, use `--cui-font` for family/weight/style and the dedicated tokens for metrics.
+
+### Brand matching
+
+A host matching its design system through configuration alone — near-black surfaces, lime accent, hairline borders, square-ish corners:
+
+```ts
+const view = createChatView(el, {
+  transport,
+  theme: 'brand',
+  extraCss: `
+    .chat-ui[data-theme='brand'] {
+      --cui-bg: #0b0b0d;
+      --cui-fg: #e8e8ea;
+      --cui-muted: #8a8a92;
+      --cui-border: #26262b;
+      --cui-assistant-bg: #141416;
+      --cui-user-bg: #1e2413;
+      --cui-accent: #b8f540;
+      --cui-accent-fg: #11130a;
+      --cui-accent-subtle: rgba(184,245,64,0.08);
+      --cui-border-width: 0.5px;
+      --cui-radius: 6px;
+      --cui-shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+    }
+  `,
+});
+```
+
+The same overrides could live in the host's own stylesheet — `extraCss` just keeps them next to the mount config (and lets the host flip `theme` per instance).
 
 ## Design
 
