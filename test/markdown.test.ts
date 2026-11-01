@@ -47,6 +47,30 @@ describe('renderMarkdown', () => {
         expect(html).toContain('<hr>');
     });
 
+    it('keeps an ordered list continuous around nested bullets', () => {
+        // Assistant output like "1. item\n   - sub\n\n2. item" must number 1,2,3 —
+        // the nested <ul> belongs inside the <li>, not between <ol> restarts.
+        const html = renderMarkdown('1. **one**\n   - sub a\n   - sub b\n\n2. **two**\n   - sub c\n\n3. **three**');
+        expect((html.match(/<ol[\s>]/g) ?? []).length).toBe(1);
+        expect(html).toContain('<ul>');
+        expect(html).toContain('sub a');
+    });
+
+    it('does not split an ordered list on blank lines (loose list)', () => {
+        expect((renderMarkdown('1. a\n\n2. b\n\n3. c').match(/<ol[\s>]/g) ?? []).length).toBe(1);
+    });
+
+    it('preserves a non-1 ordered-list start', () => {
+        expect(renderMarkdown('4. four\n5. five')).toContain('<ol start="4">');
+    });
+
+    it('still splits genuinely separate lists', () => {
+        // different marker type at the same level = new list (unchanged behavior)
+        const html = renderMarkdown('1. one\n\n- bullet');
+        expect(html).toContain('<ol>');
+        expect(html).toContain('<ul>');
+    });
+
     it('renders a simple table', () => {
         const html = renderMarkdown('| a | b |\n|---|---|\n| 1 | 2 |');
         expect(html).toContain('<table>');
