@@ -146,12 +146,17 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
     send.type = 'button';
     const cancel = el(doc, 'button', 'cui-cancel', 'Stop') as HTMLButtonElement;
     cancel.type = 'button';
-    const fileInput = doc.createElement('input');
-    fileInput.type = 'file';
-    fileInput.multiple = true;
-    fileInput.hidden = true;
-    if (features.attachmentAccept) fileInput.accept = features.attachmentAccept;
-    composer.append(modelSelect, input, attach, send, cancel, fileInput);
+    // When the transport picks attachments itself (`requestAttachments`),
+    // no built-in <input type=file> exists — the host stages its picks
+    // through handle.stageAttachments(...) instead.
+    const fileInput = transport.requestAttachments ? null : doc.createElement('input');
+    if (fileInput) {
+        fileInput.type = 'file';
+        fileInput.multiple = true;
+        fileInput.hidden = true;
+        if (features.attachmentAccept) fileInput.accept = features.attachmentAccept;
+    }
+    composer.append(modelSelect, input, attach, send, cancel, ...(fileInput ? [fileInput] : []));
     root.append(statusBar, contextCard, messagesWrap, queuePanel, quote, attachStrip, composer);
     container.appendChild(root);
 
@@ -265,7 +270,7 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         renderAttachmentStrip();
     };
 
-    fileInput.addEventListener('change', () => {
+    fileInput?.addEventListener('change', () => {
         const files = fileInput.files ? Array.from(fileInput.files) : [];
         fileInput.value = '';
         stageItems(files);
@@ -656,7 +661,7 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         if (!text && staged.length === 0) return;
         const submission: ChatSubmit = staged.length ? { text, attachments: [...staged] } : { text };
         input.value = '';
-        fileInput.value = '';
+        if (fileInput) fileInput.value = '';
         clearStaged();
         autosize();
         void transport.send(submission);
@@ -667,7 +672,10 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         applyScroll(true);
     });
     cancel.addEventListener('click', () => transport.cancel?.());
-    attach.addEventListener('click', () => fileInput.click());
+    attach.addEventListener('click', () => {
+        if (transport.requestAttachments) void transport.requestAttachments();
+        else fileInput?.click();
+    });
     quoteDismiss.addEventListener('click', () => handle.clearQuote());
 
     /* ---------------------------------------------------------------- */

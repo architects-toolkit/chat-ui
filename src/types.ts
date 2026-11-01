@@ -251,6 +251,14 @@ export interface ChatTransport {
     messageAction?(messageId: string, action: string, payload?: unknown): void;
     /** `modelPicker` feature: the composer model selector changed. */
     selectModel?(modelId: string): void;
+    /**
+     * `attachments` feature: the 📎 button was clicked and the host picks
+     * files itself (e.g. a native file dialog). When defined, the view
+     * creates no built-in `<input type=file>`; the host supplies picks
+     * out-of-band and stages them through `handle.stageAttachments(...)`.
+     * Staged items flow through `send` exactly like composer-picked ones.
+     */
+    requestAttachments?(): void | Promise<void>;
 }
 
 /**

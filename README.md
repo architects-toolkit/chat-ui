@@ -217,6 +217,8 @@ view.addInteraction(interaction);
 
 `ChatSubmit.attachments` is `readonly (File | ChatAttachment)[]` — picked/pasted files arrive as `File`; hosts can stage typed refs (`{ kind: 'image'|'audio'|'video'|'file'|…, name, url?, file? }`) via `view.stageAttachments(...)` — e.g. a speech-to-text recording. Use `isChatAttachment(x)` to discriminate. `features.inputModes` declares the input surface for capability negotiation (`'text'`, `'attachments'`, `'audio'`, …).
 
+When `transport.requestAttachments` is defined, clicking 📎 calls it instead of the built-in `<input type=file>` (which is not created) — the host supplies files out-of-band (e.g. a native file dialog) and pushes them back through `view.stageAttachments(...)`. Host-staged items ride `ChatSubmit.attachments` on send exactly like picked ones, and the strip clears after submit; paste-to-attach works the same either way.
+
 ## Feature map
 
 | Feature | UI it enables | Transport members used |
@@ -224,7 +226,7 @@ view.addInteraction(interaction);
 | `queue` | outgoing-message panel: edit / send-now / remove | `editQueued`, `sendQueuedNow`, `removeQueued` |
 | `contextCard` | context-usage meter + elapsed time | — (`setContextUsage`) |
 | `quoteChip` | staged quote chip above the composer | — (`stageQuote`/`getQuote`) |
-| `attachments` | 📎 button + preview strip (`attachmentAccept`, paste) | — |
+| `attachments` | 📎 button + preview strip (`attachmentAccept`, paste) | `requestAttachments` (optional host picker) |
 | `inputModes` | declared input affordances; gates the attach button | — |
 | `modelPicker` | composer model `<select>` (`setModels`) | `selectModel` |
 | `costChip` | per-message usage chip from `meta.usage` | — |
