@@ -302,6 +302,137 @@ describe('new part kinds', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* References part                                                     */
+/* ------------------------------------------------------------------ */
+
+describe('references part', () => {
+    const msg = (parts: ChatMessage['parts']): ChatMessage =>
+        ({ id: 'm', domKey: 'k', role: 'assistant', parts });
+
+    it('renders items in a collapsed "Sources" details', () => {
+        const { host, view } = mount();
+        view.addMessage(msg([{
+            type: 'references',
+            items: [
+                { id: 1, title: 'Docs page', url: 'https://docs.example.com/a' },
+                { title: 'Second source', url: 'https://b.example.com' },
+            ],
+        }]));
+        const details = host.querySelector<HTMLDetailsElement>('details.cui-references')!;
+        expect(details).toBeTruthy();
+        expect(details.open).toBe(false);
+        expect(details.querySelector('summary')!.textContent).toBe('Sources (2)');
+        const items = details.querySelectorAll('.cui-reference');
+        expect(items.length).toBe(2);
+        expect(items[0]!.querySelector('.cui-ref-key')!.textContent).toBe('[1]');
+        expect(items[1]!.querySelector('.cui-ref-key')!.textContent).toBe('[2]'); // positional fallback
+    });
+
+    it('links titles only when the url is safe', () => {
+        const { host, view } = mount();
+        view.addMessage(msg([{
+            type: 'references',
+            items: [
+                { title: 'Safe', url: 'https://ok.example.com' },
+                { title: 'Unsafe', url: 'javascript:alert(1)' },
+                { title: 'Obfuscated', url: 'java\tscript:alert(1)' },
+            ],
+        }]));
+        const links = host.querySelectorAll<HTMLAnchorElement>('a.cui-ref-title');
+        expect(links.length).toBe(1);
+        expect(links[0]!.href).toBe('https://ok.example.com/');
+        expect(links[0]!.rel).toBe('noopener noreferrer');
+        const textTitles = [...host.querySelectorAll('span.cui-ref-title')].map((n) => n.textContent);
+        expect(textTitles).toEqual(['Unsafe', 'Obfuscated']);
+        expect(host.innerHTML).not.toContain('javascript:');
+    });
+
+    it('renders the url itself as unlinked text when unsafe and titleless', () => {
+        const { host, view } = mount();
+        view.addMessage(msg([{
+            type: 'references',
+            items: [{ url: 'javascript:alert(1)' }],
+        }]));
+        const title = host.querySelector('span.cui-ref-title')!;
+        expect(title.textContent).toBe('javascript:alert(1)');
+        expect(host.querySelector('a.cui-ref-title')).toBeNull();
+    });
+
+    it('shows the verified badge only for verified items', () => {
+        const { host, view } = mount();
+        view.addMessage(msg([{
+            type: 'references',
+            items: [
+                { title: 'a', verified: true },
+                { title: 'b', verified: false },
+                { title: 'c' },
+            ],
+        }]));
+        const badges = host.querySelectorAll('.cui-ref-verified');
+        expect(badges.length).toBe(1);
+        expect(badges[0]!.textContent).toContain('verified');
+    });
+
+    it('shows source labels, snippets and dates', () => {
+        const { host, view } = mount();
+        view.addMessage(msg([{
+            type: 'references',
+            items: [{
+                title: 'Hit', url: 'https://x.example.com',
+                source: 'web_search', snippet: 'some excerpt', publishedAt: '2025-01-15',
+            }],
+        }]));
+        const item = host.querySelector('.cui-reference')!;
+        expect(item.querySelector('.cui-ref-source')!.textContent).toBe('web_search');
+        expect(item.querySelector('.cui-ref-snippet')!.textContent).toBe('some excerpt');
+        const time = item.querySelector<HTMLTimeElement>('time.cui-ref-date')!;
+        expect(time.textContent).toBe('2025-01-15');
+        expect(time.dateTime).toBe('2025-01-15');
+    });
+
+    it('tolerates missing and malformed fields', () => {
+        const { host, view } = mount();
+        view.addMessage(msg([{
+            type: 'references',
+            items: [{}, null, 42, { snippet: 'only a snippet' }] as never,
+        }]));
+        const items = host.querySelectorAll('.cui-reference');
+        expect(items.length).toBe(2);
+        expect(items[0]!.querySelector('.cui-ref-key')!.textContent).toBe('[1]');
+        expect(items[1]!.querySelector('.cui-ref-snippet')!.textContent).toBe('only a snippet');
+    });
+
+    it('renders nothing when items is empty or missing', () => {
+        const { host, view } = mount();
+        view.addMessage(msg([
+            { type: 'references', items: [] },
+            { type: 'references' } as never,
+        ]));
+        expect(host.querySelector('.cui-references')).toBeNull();
+    });
+
+    it('escapes item text instead of injecting HTML', () => {
+        const { host, view } = mount();
+        view.addMessage(msg([{
+            type: 'references',
+            items: [{ title: '<img src=x onerror=alert(1)>', snippet: '<b>x</b>' }],
+        }]));
+        expect(host.querySelector('.cui-reference img')).toBeNull();
+        expect(host.querySelector('.cui-ref-title')!.textContent).toBe('<img src=x onerror=alert(1)>');
+    });
+
+    it('renders through the canonical addInteraction path', () => {
+        const { host, view } = mount();
+        const wire = JSON.parse(JSON.stringify({
+            id: 'rt', role: 'assistant',
+            parts: [{ type: 'references', items: [{ title: 'Src', url: 'https://s.example.com' }] }],
+        }));
+        view.addInteraction(wire);
+        expect(host.querySelector('details.cui-references a.cui-ref-title')).toBeTruthy();
+    });
+});
+
+/* ------------------------------------------------------------------ */
 /* Card kinds                                                          */
 /* ------------------------------------------------------------------ */
 

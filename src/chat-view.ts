@@ -17,7 +17,7 @@
 
 import { interactionPatchToMessage, interactionToMessage } from './interactions.js';
 import { MarkdownStreamRenderer } from './markdown-stream.js';
-import { renderMarkdown, safeEmbedUrl } from './markdown.js';
+import { isSafeUrl, renderMarkdown, safeEmbedUrl } from './markdown.js';
 import {
     attachmentKindOf,
     attachmentNameOf,
@@ -38,6 +38,7 @@ import type {
     PartRenderer,
     QuestionCardData,
     QueuedMessage,
+    ReferenceItem,
     SubmitAttachment,
     TaskPlanCardData,
     UsageInfo,
@@ -464,6 +465,74 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
         return card;
     };
 
+    /**
+     * `references` part — a collapsed "Sources (n)" footer listing where
+     * the answer's data came from. Every field is optional; entries that
+     * are not objects are skipped and the rest render by position. `url`
+     * becomes a link only when {@link isSafeUrl} accepts it — unsafe
+     * schemes degrade to plain text. All fields are assigned through
+     * textContent/attributes — never innerHTML.
+     */
+    const renderReferences = (part: Extract<MessagePart, { type: 'references' }>): HTMLElement | null => {
+        const raw = part.items;
+        const items = (Array.isArray(raw) ? raw : []).filter(
+            (item): item is ReferenceItem => typeof item === 'object' && item !== null,
+        );
+        if (items.length === 0) return null;
+
+        const details = el(doc, 'details', 'cui-references');
+        details.appendChild(el(doc, 'summary', 'cui-references-summary', `Sources (${items.length})`));
+        const list = el(doc, 'ol', 'cui-references-list');
+        items.forEach((item, index) => {
+            const li = el(doc, 'li', 'cui-reference');
+            const id = item.id;
+            const key = id !== undefined && id !== null && `${id}` !== '' ? `${id}` : String(index + 1);
+            li.appendChild(el(doc, 'span', 'cui-ref-key', `[${key}]`));
+
+            const body = el(doc, 'span', 'cui-ref-body');
+            const title = typeof item.title === 'string' ? item.title : undefined;
+            const url = typeof item.url === 'string' ? item.url : undefined;
+            if (title !== undefined || url !== undefined) {
+                const label = title ?? url ?? '';
+                if (url !== undefined && isSafeUrl(url)) {
+                    const link = doc.createElement('a');
+                    link.className = 'cui-ref-title';
+                    link.href = url;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.textContent = label;
+                    body.appendChild(link);
+                } else {
+                    body.appendChild(el(doc, 'span', 'cui-ref-title', label));
+                }
+            }
+
+            const meta = el(doc, 'span', 'cui-ref-meta');
+            if (typeof item.source === 'string' && item.source !== '') {
+                meta.appendChild(el(doc, 'span', 'cui-ref-source', item.source));
+            }
+            if (item.verified === true) {
+                meta.appendChild(el(doc, 'span', 'cui-ref-verified', '✓ verified'));
+            }
+            if (typeof item.publishedAt === 'string' && item.publishedAt !== '') {
+                const time = doc.createElement('time');
+                time.className = 'cui-ref-date';
+                time.dateTime = item.publishedAt;
+                time.textContent = item.publishedAt;
+                meta.appendChild(time);
+            }
+            if (meta.childElementCount > 0) body.appendChild(meta);
+
+            if (typeof item.snippet === 'string' && item.snippet !== '') {
+                body.appendChild(el(doc, 'span', 'cui-ref-snippet', item.snippet));
+            }
+            li.appendChild(body);
+            list.appendChild(li);
+        });
+        details.appendChild(list);
+        return details;
+    };
+
     const renderCard = (part: Extract<MessagePart, { type: 'card' }>, message: ChatMessage): HTMLElement | null => {
         const custom = customRenderers[`card:${part.kind}`];
         if (custom) return custom(part, { message, ownerDocument: doc });
@@ -572,6 +641,8 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
                 node.dataset.error = String(Boolean(part.isError));
                 return node;
             }
+            case 'references':
+                return renderReferences(part);
             case 'divider':
                 return el(doc, 'hr');
             default:

@@ -20,7 +20,7 @@ A capability map (`ChatFeatures`) switches each optional region (queue panel, co
 
 ## 4. Messages are data; parts are extensible
 
-`ChatMessage` is a serializable value: role, status, and an ordered `parts` array. Built-in renderers cover `text`, `markdown`, `html`, `image`, `audio`, `video`, `quote`, `suggestions`, `usage`, `evidence`, `tool_call`, `tool_result`, `divider`, and four typed `card` kinds (`task_plan`, `question`, `approval`, `model_select`). Everything else resolves through the renderer registry: `partRenderers['card:<kind>']` → `partRenderers[<type>]` → `partRenderers['card']`. A small set of generic card kinds plus host renderers is preferred over a large bespoke enum.
+`ChatMessage` is a serializable value: role, status, and an ordered `parts` array. Built-in renderers cover `text`, `markdown`, `html`, `image`, `audio`, `video`, `quote`, `suggestions`, `usage`, `evidence`, `references`, `tool_call`, `tool_result`, `divider`, and four typed `card` kinds (`task_plan`, `question`, `approval`, `model_select`). The `references` part renders a collapsed "Sources (n)" citation footer — every item field is optional and `url` is linked only when it passes the same sanitizer as markdown links, so citations travel as plain JSON and never inject markup. Everything else resolves through the renderer registry: `partRenderers['card:<kind>']` → `partRenderers[<type>]` → `partRenderers['card']`. A small set of generic card kinds plus host renderers is preferred over a large bespoke enum.
 
 ## 5. Streaming is incremental and anchor-safe
 

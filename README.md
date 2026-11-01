@@ -95,6 +95,7 @@ function Chat({ transport }: { transport: ChatTransport }) {
 | `suggestions` | clickable prompt chips (`messageAction` or composer fill) |
 | `usage` | per-turn cost/usage chip (`tokensIn`, `tokensOut`, `cost`, `currency`, `durationMs`) |
 | `evidence` | muted system line for background-agent/audit turns (`level: info\|warning\|error`) |
+| `references` | collapsed "Sources (n)" citation footer — numbered `[id]` entries with title (linked only when `url` is safe), snippet, source label, verified badge, date |
 | `tool_call` / `tool_result` | tool invocation + output blocks |
 | `divider` | `<hr>` |
 | `card` | typed card — see below |
@@ -159,6 +160,7 @@ view.addInteraction(normalizeInteraction(streamChunk));
 | `suggestions` | `prompts` (string[]) | — |
 | `usage` | `usage` | `label`, `tokensIn`, `tokensOut`, `cost`, `currency`, `durationMs` |
 | `evidence` | `text` | `detail`, `level` (`info\|warning\|error`) |
+| `references` | `items` (ReferenceItem[]) | item fields: `id`, `title`, `url`, `snippet`, `source`, `verified`, `publishedAt` |
 | `card` | `kind` | `data` (see card kinds above) |
 
 Malformed entries (non-objects, missing `type`) are dropped at the boundary; unknown-but-well-formed `type`s pass through to your `partRenderers` registry — custom parts ride the same wire.

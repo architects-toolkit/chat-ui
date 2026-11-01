@@ -46,6 +46,7 @@ export type {
     PartRenderer,
     QuestionCardData,
     QueuedMessage,
+    ReferenceItem,
     SubmitAttachment,
     TaskPlanCardData,
     TaskPlanStep,
