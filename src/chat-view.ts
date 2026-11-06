@@ -779,9 +779,10 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
                 const node = el(doc, 'div', 'cui-part-tool_call');
                 if (part.callId) node.dataset.callid = part.callId;
                 const header = el(doc, 'div', 'cui-tool-name');
-                const running = part.status === 'pending' || part.status === 'running';
-                if (running) header.appendChild(el(doc, 'span', 'cui-tool-spinner'));
-                else header.appendChild(el(doc, 'span', 'cui-tool-glyph', part.status === 'error' ? '✕' : '⚙'));
+                const status = part.status ?? 'done';
+                if (status === 'pending') header.appendChild(el(doc, 'span', 'cui-tool-queued'));
+                else if (status === 'running') header.appendChild(el(doc, 'span', 'cui-tool-spinner'));
+                else header.appendChild(el(doc, 'span', 'cui-tool-glyph', status === 'error' ? '✕' : '✓'));
                 header.appendChild(el(doc, 'span', 'cui-tool-title', part.title ?? part.name));
                 node.appendChild(header);
                 if (part.args) node.appendChild(el(doc, 'pre', '', part.args));
