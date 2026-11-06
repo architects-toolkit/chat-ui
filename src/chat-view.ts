@@ -777,14 +777,30 @@ export function createChatView(container: HTMLElement, options: ChatViewOptions)
             }
             case 'tool_call': {
                 const node = el(doc, 'div', 'cui-part-tool_call');
-                node.appendChild(el(doc, 'div', 'cui-tool-name', `⚙ ${part.name}`));
+                if (part.callId) node.dataset.callid = part.callId;
+                const header = el(doc, 'div', 'cui-tool-name');
+                const running = part.status === 'pending' || part.status === 'running';
+                if (running) header.appendChild(el(doc, 'span', 'cui-tool-spinner'));
+                else header.appendChild(el(doc, 'span', 'cui-tool-glyph', part.status === 'error' ? '✕' : '⚙'));
+                header.appendChild(el(doc, 'span', 'cui-tool-title', part.title ?? part.name));
+                node.appendChild(header);
                 if (part.args) node.appendChild(el(doc, 'pre', '', part.args));
                 if (part.status) node.dataset.status = part.status;
                 return node;
             }
             case 'tool_result': {
-                const node = el(doc, 'div', 'cui-part-tool_result', part.content);
+                const node = el(doc, 'div', 'cui-part-tool_result');
+                if (part.callId) node.dataset.callid = part.callId;
+                const caption = part.summary ?? part.title;
+                if (caption || part.name) {
+                    const header = el(doc, 'div', 'cui-tool-result-name');
+                    header.appendChild(el(doc, 'span', 'cui-tool-glyph', part.isError ? '✕' : '✓'));
+                    header.appendChild(el(doc, 'span', 'cui-tool-title', caption ?? part.name!));
+                    node.appendChild(header);
+                }
+                node.appendChild(el(doc, 'div', 'cui-tool-result-content', part.content));
                 node.dataset.error = String(Boolean(part.isError));
+                node.dataset.state = 'done';
                 return node;
             }
             case 'references':

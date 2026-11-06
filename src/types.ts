@@ -270,8 +270,8 @@ export type MessagePart =
     | { readonly type: 'suggestions'; readonly prompts: readonly string[] }
     | { readonly type: 'usage'; readonly usage: UsageInfo }
     | { readonly type: 'evidence'; readonly text: string; readonly detail?: string; readonly level?: EvidenceLevel }
-    | { readonly type: 'tool_call'; readonly name: string; readonly args?: string; readonly status?: 'pending' | 'running' | 'done' | 'error' }
-    | { readonly type: 'tool_result'; readonly name?: string; readonly content: string; readonly isError?: boolean }
+    | { readonly type: 'tool_call'; readonly name: string; readonly args?: string; readonly status?: 'pending' | 'running' | 'done' | 'error'; readonly callId?: string; readonly title?: string }
+    | { readonly type: 'tool_result'; readonly name?: string; readonly content: string; readonly isError?: boolean; readonly callId?: string; readonly title?: string; readonly summary?: string }
     | { readonly type: 'references'; readonly items: readonly ReferenceItem[] }
     | CardPart
     | { readonly type: 'divider' };
